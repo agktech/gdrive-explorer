@@ -262,9 +262,8 @@ async function completeSignIn(resp, expectedEmail) {
   acc.name = (me && me.name) || email; acc.picture = (me && me.picture) || '';
   acc.token = token; acc.expiresAt = expiresAt; acc.needsAuth = false;
   acc.cache.clear();
-  // Always land on "My Root Drive" after sign-in: ONLY the folders and files
-  // that sit directly on the root — nothing from inside any folder.
-  acc.nav = { view: 'rootdrive', folderId: 'root', path: [{ id: 'rootdrive', name: 'My Root Drive' }], hist: [], hi: -1 };
+  // Always land on My Drive (Level 1 — direct children of root only) after sign-in.
+  acc.nav = { view: 'folder', folderId: 'root', path: [{ id: 'root', name: 'My Drive' }], hist: [], hi: -1 };
   acc.selected = new Set();
   persistAccounts();
   await refreshAbout(acc).catch(() => {});
@@ -397,7 +396,7 @@ async function goView(acc, view) {
   acc.selected = new Set(); pushNav(acc); await loadCurrent();
 }
 function viewLabel(v) {
-  return { rootdrive: 'My Root Drive', folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', trash: 'Bin', search: 'Search results' }[v] || v;
+  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', trash: 'Bin', search: 'Search results' }[v] || v;
 }
 
 /* ---------------- Data loading ---------------- */
@@ -428,7 +427,6 @@ async function loadCurrent() {
 }
 async function fetchViewItems(acc, nav) {
   switch (nav.view) {
-    case 'rootdrive': return listChildren(acc, 'root');
     case 'folder': return listChildren(acc, nav.folderId);
     case 'recent': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('trashed=false') + '&orderBy=modifiedTime%20desc&' + LIST_Q());
     case 'starred': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('starred=true and trashed=false') + '&' + LIST_Q());
@@ -587,7 +585,7 @@ function renderItems() {
   // a "Folders" section first, then a "Files" section — never one mixed dump.
   const _folders = items.filter((f) => f.mimeType === FOLDER_MIME);
   const _files = items.filter((f) => f.mimeType !== FOLDER_MIME);
-  const groups = ((acc.nav.view === 'folder' || acc.nav.view === 'rootdrive') && _folders.length && _files.length)
+  const groups = (acc.nav.view === 'folder' && _folders.length && _files.length)
     ? [['Folders', _folders], ['Files', _files]]
     : [[null, items]];
   if (viewMode === 'details') {
