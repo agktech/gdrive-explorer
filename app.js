@@ -768,7 +768,6 @@ function renderItems() {
 /* ---------------- Google Photos picks (My Photos / My Videos) ---------------- */
 const PHOTOS_API = 'https://photospicker.googleapis.com/v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function pickedItems(acc, kind) { return (acc.picked || []).filter((p) => p.kind === kind); }
 async function photosApi(acc, path, opts) {
   if (!acc || !acc.token) throw new Error('Not signed in. Click your drive chip to sign in again.');
   const res = await fetch(PHOTOS_API + path, Object.assign({ headers: { Authorization: 'Bearer ' + acc.token, 'Content-Type': 'application/json' } }, opts || {}));
@@ -809,8 +808,12 @@ function fmtDuration(d) {
 }
 async function importFromPhotos() {
   const acc = activeAcc(); if (!acc || acc.needsAuth) { toast('Connect a drive first.', 'err'); return; }
+  if (importInProgress) { toast('An import is already running — finish it first.', 'err'); return; }
+  importInProgress = true;
   setBusy(true, 'Starting Google Photos picker…');
   try {
+    // Retire the previous session (if any) — its links are replaced by the new import.
+    if (acc.photoSessionId) { try { await photosApi(acc, '/sessions/' + acc.photoSessionId, { method: 'DELETE' }); } catch (e) {} acc.photoSessionId = null; }
     const sess = await (await photosApi(acc, '/sessions', { method: 'POST', body: '{}' })).json();
     if (!sess.id || !sess.pickerUri) throw new Error('Could not start the Google Photos picker.');
     setBusy(false);
@@ -831,8 +834,10 @@ async function importFromPhotos() {
       (r.mediaItems || []).forEach((m) => { if (m.mediaFile && m.mediaFile.baseUrl) items.push(pickItem(m)); });
       pageToken = r.nextPageToken || '';
     } while (pageToken);
-    try { await photosApi(acc, '/sessions/' + sess.id, { method: 'DELETE' }); } catch (e) {}
+    // NOTE: the session is intentionally kept alive — deleting it can invalidate
+    // the photo links immediately. Google expires sessions automatically.
     if (!items.length) { toast('No items were picked.', 'err'); return; }
+    acc.photoSessionId = sess.id;
     acc.picked = (acc.picked || []).concat(items);
     const np = items.filter((p) => p.kind === 'photo').length;
     toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
@@ -840,7 +845,43 @@ async function importFromPhotos() {
   } catch (e) {
     if (e && e.status === 403) { setBusy(false); offerPhotosConsent(e.message); return; }
     toast(e.message, 'err');
-  } finally { setBusy(false); }
+  } finally { setBusy(false); importInProgress = false; }
+}
+let importInProgress = false;
+// Re-list the current picker session to get fresh photo links (links expire).
+async function refreshPickedLinks(quiet) {
+  const acc = activeAcc();
+  if (!acc || !acc.photoSessionId) { if (!quiet) toast('Nothing to refresh — import first.', 'err'); return 0; }
+  if (!quiet) setBusy(true, 'Refreshing photo links…');
+  try {
+    const map = {};
+    let pageToken = '';
+    do {
+      const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(acc.photoSessionId) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
+      (r.mediaItems || []).forEach((m) => { const mf = m.mediaFile || {}; if (mf.baseUrl) map[m.id] = mf.baseUrl; });
+      pageToken = r.nextPageToken || '';
+    } while (pageToken);
+    let n = 0;
+    (acc.picked || []).forEach((p) => { if (map[p.pid]) { p.baseUrl = map[p.pid]; n++; } });
+    if (!quiet) toast(n ? 'Refreshed ' + n + ' link(s).' : 'No fresh links found — import again.', n ? 'ok' : 'err');
+    if (!quiet && acc.nav.view === 'media') renderPickedView(acc);
+    return n;
+  } catch (e) { if (!quiet) toast(e.message, 'err'); return 0; }
+  finally { if (!quiet) setBusy(false); }
+}
+// Fetch a picked item's bytes; refreshes links once and retries if the link expired.
+async function fetchPickedBytes(p) {
+  const tryFetch = async () => {
+    const res = await fetch(pickedBytesUrl(p));
+    if (!res.ok) throw new Error('Photo service returned ' + res.status);
+    return res.blob();
+  };
+  try { return await tryFetch(); }
+  catch (e) {
+    const n = await refreshPickedLinks(true);
+    if (n) return tryFetch();
+    throw e;
+  }
 }
 function renderPickedView(acc) {
   const items = (acc.picked || []).slice().sort((a, b) => String(b.createTime || '').localeCompare(String(a.createTime || '')));
@@ -854,9 +895,11 @@ function renderPickedView(acc) {
   const bar = document.createElement('div');
   bar.className = 'picked-bar';
   bar.innerHTML = '<button class="btn primary" id="importPhotosBtn">📷 Import from Google Photos</button>' +
+    '<button class="btn" id="refreshLinksBtn" title="Get fresh photo links">↻ Refresh links</button>' +
     '<span class="pv-note">Picks stay for this session only — import again after reloading the page.</span>';
   grid.appendChild(bar);
   $('importPhotosBtn').onclick = importFromPhotos;
+  $('refreshLinksBtn').onclick = () => refreshPickedLinks(false);
   if (!items.length) {
     const d = document.createElement('div'); d.className = 'pv-info';
     d.innerHTML = 'Nothing here yet.<br>Click <b>Import from Google Photos</b> to pick photos and videos and view them here.';
@@ -867,6 +910,8 @@ function renderPickedView(acc) {
     el.className = 'tile picked-tile';
     if (p.kind === 'photo') {
       el.innerHTML = '<div class="t-icon picked-thumb"><img src="' + escAttr(p.baseUrl + '=w320-h240-c') + '" alt="" loading="lazy"></div><div class="t-name">' + esc(p.name) + '</div>';
+      const img = el.querySelector('img');
+      if (img) img.onerror = () => { const d = document.createElement('div'); d.className = 'picked-thumb picked-broken'; d.textContent = '📷'; img.replaceWith(d); };
     } else {
       el.innerHTML = '<div class="t-icon picked-thumb picked-video"><span class="picked-play">🎬</span>' + (p.duration ? '<span class="picked-dur">' + esc(fmtDuration(p.duration)) + '</span>' : '') + '</div><div class="t-name">' + esc(p.name) + '</div>';
     }
@@ -898,15 +943,15 @@ async function previewPicked(p) {
   const body = $('pvBody');
   try {
     setBusy(true, 'Loading preview…');
-    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    const blob = await fetchPickedBytes(p);
     setBusy(false);
     await renderPreviewBlob(f, blob, body);
-  } catch (e) { setBusy(false); body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '</div>'; }
+  } catch (e) { setBusy(false); body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '<br><br>Try the <b>↻ Refresh links</b> button in My Photos &amp; Videos, then view again.</div>'; }
 }
 async function downloadPicked(p) {
   setBusy(true, 'Preparing download…');
   try {
-    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    const blob = await fetchPickedBytes(p);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = p.name;
     document.body.appendChild(a); a.click(); a.remove();
@@ -918,7 +963,7 @@ async function savePickedToDrive(p) {
   const acc = activeAcc(); if (!acc || acc.needsAuth) { toast('Connect a drive first.', 'err'); return; }
   setBusy(true, 'Saving to Drive…');
   try {
-    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    const blob = await fetchPickedBytes(p);
     await uploadBlob(acc, blob, p.name, 'root', p.mimeType);
     invalidate(acc);
     toast('Saved to My Drive: ' + p.name, 'ok');
