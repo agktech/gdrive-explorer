@@ -9,7 +9,7 @@
 const CFG = (window.GDRIVE_EXPLORER_CONFIG || {});
 const CLIENT_ID = (CFG.clientId || '').trim();
 const CONFIGURED = !!CLIENT_ID && CLIENT_ID !== 'PASTE_CLIENT_ID';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive openid email profile';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -240,15 +240,26 @@ async function reauth(acc) {
 async function completeSignIn(resp, expectedEmail) {
   const token = resp.access_token;
   const expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
-  let me;
+  let me = null;
+  // Identity comes from the Drive API itself (the drive scope covers it).
+  // The oauth2 userinfo endpoint is only a fallback — it must never block sign-in.
   try {
-    me = await fetchJson('https://www.googleapis.com/oauth2/v3/userinfo', token);
-  } catch (e) { toast('Signed in, but could not read the account profile.', 'err'); return false; }
-  const email = (me.email || expectedEmail || '').toLowerCase();
+    const about = await fetchJson(API + '/about?fields=user(displayName,emailAddress,photoLink)', token);
+    if (about && about.user && about.user.emailAddress) {
+      me = { email: about.user.emailAddress, name: about.user.displayName, picture: about.user.photoLink };
+    }
+  } catch (e) { /* fall through to userinfo */ }
+  if (!me) {
+    try {
+      const ui = await fetchJson('https://www.googleapis.com/oauth2/v3/userinfo', token);
+      if (ui && ui.email) me = { email: ui.email, name: ui.name, picture: ui.picture };
+    } catch (e) { /* non-fatal — expectedEmail (if any) is used below */ }
+  }
+  const email = ((me && me.email) || expectedEmail || '').toLowerCase();
   if (!email) { toast('Could not determine the account email.', 'err'); return false; }
   let acc = accounts.get(email);
   if (!acc) { acc = newAccount(email); accounts.set(email, acc); }
-  acc.name = me.name || email; acc.picture = me.picture || '';
+  acc.name = (me && me.name) || email; acc.picture = (me && me.picture) || '';
   acc.token = token; acc.expiresAt = expiresAt; acc.needsAuth = false;
   acc.cache.clear();
   persistAccounts();
