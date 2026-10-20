@@ -288,7 +288,7 @@ function ensureGis() {
     }, 100);
   });
 }
-async function requestToken(loginHint) {
+async function requestToken(loginHint, promptOverride) {
   if (!CONFIGURED) { showSetupDialog(); return null; }
   await ensureGis();
   return new Promise((resolve) => {
@@ -301,9 +301,37 @@ async function requestToken(loginHint) {
         error_callback: () => resolve(null),
       });
     } catch (e) { resolve(null); return; }
-    const opts = loginHint ? { login_hint: loginHint } : { prompt: 'select_account' };
+    const opts = promptOverride
+      ? { prompt: promptOverride, login_hint: loginHint }
+      : (loginHint ? { login_hint: loginHint } : { prompt: 'select_account' });
     try { client.requestAccessToken(opts); } catch (e) { resolve(null); }
   });
+}
+// Re-runs Google's permission screen for the active account (used to pick up newly added scopes).
+async function grantPhotosAccess() {
+  const acc = activeAcc(); if (!acc) return false;
+  setBusy(true, 'Opening Google permission screen…');
+  try {
+    const resp = await requestToken(acc.email, 'consent');
+    if (!resp || !resp.access_token) { toast('Permission was not granted.', 'err'); return false; }
+    acc.token = resp.access_token;
+    acc.expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+    acc.needsAuth = false;
+    persistAccounts();
+    toast('Google Photos access granted.', 'ok');
+    return true;
+  } finally { setBusy(false); }
+}
+function offerPhotosConsent() {
+  openModal('Google Photos permission',
+    '<div class="pv-info">The app needs your permission to open the Google Photos picker.<br><br>Click <b>Grant access</b> — on the Google screen, tick the <b>Google Photos</b> checkbox, then click <b>Continue</b>. The picker will open right after.</div>',
+    [
+      { label: 'Cancel' },
+      {
+        label: 'Grant access', primary: true,
+        onClick: async () => { const ok = await grantPhotosAccess(); if (ok) setTimeout(() => importFromPhotos(), 800); },
+      },
+    ]);
 }
 async function addDrive() {
   if (!CONFIGURED) { showSetupDialog(); return; }
@@ -746,7 +774,7 @@ async function photosApi(acc, path, opts) {
     acc.needsAuth = true; acc.token = null; persistAccounts(); renderChips();
     throw new Error('Session expired — click your drive chip to sign in again.');
   }
-  if (res.status === 403) throw new Error('Google Photos access was not granted — please Sign out and sign in again, ticking the Google Photos permission.');
+  if (res.status === 403) { const err = new Error('Google Photos permission is missing on this sign-in.'); err.status = 403; throw err; }
   if (!res.ok) {
     let msg = res.status + ' ' + res.statusText;
     try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
@@ -800,7 +828,10 @@ async function importFromPhotos() {
     const np = items.filter((p) => p.kind === 'photo').length;
     toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
     if (acc.nav.view === 'photos' || acc.nav.view === 'videos') renderPickedView(acc);
-  } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
+  } catch (e) {
+    if (e && e.status === 403) { setBusy(false); offerPhotosConsent(); return; }
+    toast(e.message, 'err');
+  } finally { setBusy(false); }
 }
 function renderPickedView(acc) {
   const isPhotos = acc.nav.view === 'photos';
