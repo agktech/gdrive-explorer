@@ -348,3 +348,15 @@ button { font-family: inherit; }
 .pv-text { cursor: text; }
 .pv-texthdr { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 .cmd svg.cmd-ic { width: 17px; height: 17px; }
+
+/* Window-style popup: title bar controls, drag, minimize, maximize */
+.modal-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: move; user-select: none; }
+.modal-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.win-controls { display: flex; gap: 2px; flex-shrink: 0; cursor: default; }
+.win-btn { border: none; background: none; width: 32px; height: 26px; border-radius: 5px; cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1; }
+.win-btn:hover { background: var(--hover); color: var(--text); }
+.win-btn.win-close:hover { background: #e81123; color: #fff; }
+.modal.maximized { width: 96vw; height: 92vh; max-width: 96vw; }
+.modal.maximized .modal-body { flex: 1 1 auto; max-height: none; }
+.modal.minimized { width: 340px; }
+.modal.minimized .modal-body, .modal.minimized .modal-actions { display: none; }
