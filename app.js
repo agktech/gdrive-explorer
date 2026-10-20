@@ -959,6 +959,7 @@ async function previewPicked(p) {
     [
       { label: 'Download', keepOpen: true, onClick: () => downloadPicked(p) },
       { label: '🔗 Open original', onClick: () => window.open(p.baseUrl + '=d', '_blank') },
+      { label: '📋 Copy photo link', keepOpen: true, onClick: () => { try { console.log('[photos] baseUrl: ' + p.baseUrl); } catch (e) {} navigator.clipboard.writeText(p.baseUrl + '=d').then(() => toast('Photo link copied — paste it in chat.', 'ok')).catch(() => toast('Copy failed — the link is in the browser console (F12).', 'err')); } },
       { label: 'Save to Drive', keepOpen: true, onClick: () => savePickedToDrive(p) },
       { label: 'Close' },
     ], closePv);
