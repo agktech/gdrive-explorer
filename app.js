@@ -887,9 +887,9 @@ async function renderZipPreview(blob, body) {
   const zip = await window.JSZip.loadAsync(blob);
   const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir).sort();
   if (!names.length) { body.innerHTML = '<div class="pv-info">This archive is empty.</div>'; return; }
-  body.innerHTML = '<div class="pv-ziphead">' + names.length + ' file(s) in this archive — click any file to download it.</div>' +
+  body.innerHTML = '<div class="pv-ziphead">' + names.length + ' file(s) in this archive — click any file to view or download it.</div>' +
     '<div class="pv-ziplist">' + names.map((n, i) =>
-      '<div class="pv-ziprow" data-i="' + i + '"><span>📄</span><span class="pv-zipname">' + esc(n) + '</span></div>').join('') + '</div>';
+      '<div class="pv-ziprow" data-i="' + i + '"><span>📄</span><span class="pv-zipname">' + esc(n) + '</span></div>').join('') + '</div><div id="pvZipView"></div>';
   body.querySelectorAll('.pv-ziprow').forEach((row) => {
     row.onclick = (ev) => {
       ev.stopPropagation(); // keep the app's global click-closer from instantly dismissing the popup
@@ -931,8 +931,11 @@ async function viewZipEntry(zip, entryName, viewEl) {
       else if (kind === 'text') { const t = await b.text(); renderTextPreview(t, content, 'pvZipCopy'); }
     }
     $('pvZipClose').onclick = () => { viewEl.innerHTML = ''; revokePreviewUrl(); };
+    const shown = $('pvZipContent');
+    if (shown && shown.scrollIntoView) shown.scrollIntoView({ block: 'nearest' });
   } catch (e) {
     viewEl.innerHTML = '<div class="pv-error">Could not preview: ' + esc(e.message) + '</div>';
+    toast('View failed: ' + e.message, 'err');
   }
 }
 
