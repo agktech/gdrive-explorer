@@ -759,7 +759,7 @@ async function previewFile(f) {
     else if (kind === 'pdf') body.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
     else if (kind === 'video') body.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video><p class="pv-note">Large videos download fully before playing — give it a moment.</p>';
     else if (kind === 'audio') body.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
-    else if (kind === 'text') { const t = await blob.text(); body.innerHTML = '<pre class="pv-text">' + esc(t.slice(0, 200000)) + (t.length > 200000 ? '\n…(truncated)' : '') + '</pre>'; }
+    else if (kind === 'text') { const t = await blob.text(); renderTextPreview(t, body); }
     else if (kind === 'docx') await renderDocxPreview(blob, body);
     else if (kind === 'xlsx') await renderXlsxPreview(blob, body);
     else if (kind === 'zip') await renderZipPreview(blob, body);
@@ -782,6 +782,17 @@ async function renderNativePreview(acc, f, body) {
     return;
   }
   body.innerHTML = '<div class="pv-info">This is a ' + esc(label) + ' — it opens best in its Google app.<br>Use <b>Open in Drive</b> below.</div>';
+}
+function renderTextPreview(t, body, btnId) {
+  const id = btnId || 'pvCopy';
+  const shown = t.slice(0, 200000);
+  body.innerHTML = '<div class="pv-texthdr"><button class="btn" id="' + id + '">📋 Copy text</button></div>' +
+    '<pre class="pv-text">' + esc(shown) + (t.length > 200000 ? '\n…(truncated)' : '') + '</pre>';
+  const b = $(id);
+  if (b) b.onclick = async () => {
+    try { await navigator.clipboard.writeText(t); toast('Text copied to clipboard', 'ok'); }
+    catch (e) { toast('Copy failed — select the text manually', 'err'); }
+  };
 }
 function renderOtherPreview(f, body) {
   body.innerHTML = '<div class="pv-info">No in-app preview for this file type yet (' + esc(typeLabel(f.mimeType, f.name)) + ').<br>Use <b>Download</b> or <b>Open in Drive</b> below.</div>';
@@ -854,7 +865,7 @@ async function viewZipEntry(zip, entryName, viewEl) {
       else if (kind === 'pdf') content.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
       else if (kind === 'video') content.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video>';
       else if (kind === 'audio') content.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
-      else if (kind === 'text') { const t = await b.text(); content.innerHTML = '<pre class="pv-text">' + esc(t.slice(0, 200000)) + (t.length > 200000 ? '\n…(truncated)' : '') + '</pre>'; }
+      else if (kind === 'text') { const t = await b.text(); renderTextPreview(t, content, 'pvZipCopy'); }
     }
     $('pvZipClose').onclick = () => { viewEl.innerHTML = ''; revokePreviewUrl(); };
   } catch (e) {
