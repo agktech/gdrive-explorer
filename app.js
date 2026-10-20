@@ -169,21 +169,69 @@ function setBusy(on, text) {
   }
 }
 
-/* ---------------- Modal helper ---------------- */
-function openModal(title, bodyHTML, actions) {
-  $('modalTitle').textContent = title;
+/* ---------------- Modal helper (window-style: drag, minimize, maximize, close) ---------------- */
+let modalOnClose = null;
+let modalDrag = null;
+const modalWin = { maximized: false, minimized: false };
+function openModal(title, bodyHTML, actions, onClose) {
+  modalOnClose = onClose || null;
+  modalWin.maximized = false; modalWin.minimized = false;
+  const box = $('modalBox');
+  box.classList.remove('maximized', 'minimized');
+  box.style.position = ''; box.style.left = ''; box.style.top = '';
+  $('modalTitle').innerHTML = '<span class="modal-title-text">' + esc(title) + '</span>' +
+    '<span class="win-controls">' +
+    '<button class="win-btn" id="winMin" title="Minimize">\u2014</button>' +
+    '<button class="win-btn" id="winMax" title="Maximize / restore">\u26F6</button>' +
+    '<button class="win-btn win-close" id="winClose" title="Close">\u2715</button></span>';
   $('modalBody').innerHTML = bodyHTML;
-  const box = $('modalActions'); box.innerHTML = '';
+  const ab = $('modalActions'); ab.innerHTML = '';
   (actions || [{ label: 'Close' }]).forEach((a) => {
     const b = document.createElement('button');
     b.className = 'btn' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : '');
     b.textContent = a.label;
     b.onclick = () => { if (a.onClick) a.onClick(); if (!a.keepOpen) closeModal(); };
-    box.appendChild(b);
+    ab.appendChild(b);
   });
+  $('winMin').onclick = (e) => { e.stopPropagation(); modalWin.minimized = !modalWin.minimized; box.classList.toggle('minimized', modalWin.minimized); };
+  $('winMax').onclick = (e) => { e.stopPropagation(); toggleMaxModal(); };
+  $('winClose').onclick = (e) => { e.stopPropagation(); closeModal(); };
   $('modalBackdrop').classList.remove('hidden');
+  makeModalDraggable();
 }
-function closeModal() { $('modalBackdrop').classList.add('hidden'); }
+function toggleMaxModal() {
+  const box = $('modalBox');
+  modalWin.maximized = !modalWin.maximized;
+  box.classList.toggle('maximized', modalWin.maximized);
+  box.style.position = ''; box.style.left = ''; box.style.top = '';
+  $('winMax').textContent = modalWin.maximized ? '\u2750' : '\u26F6';
+}
+function closeModal() {
+  $('modalBackdrop').classList.add('hidden');
+  if (modalOnClose) { const f = modalOnClose; modalOnClose = null; try { f(); } catch (e) {} }
+}
+function makeModalDraggable() {
+  const title = $('modalTitle'), box = $('modalBox');
+  title.onmousedown = (e) => {
+    if (e.target.closest('.win-btn') || modalWin.maximized) return;
+    const r = box.getBoundingClientRect();
+    box.style.position = 'fixed';
+    box.style.left = r.left + 'px';
+    box.style.top = r.top + 'px';
+    modalDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    document.addEventListener('mousemove', modalDragMove);
+    document.addEventListener('mouseup', modalDragEnd, { once: true });
+    e.preventDefault();
+  };
+}
+function modalDragMove(e) {
+  if (!modalDrag) return;
+  const box = $('modalBox'), w = box.offsetWidth;
+  const x = Math.max(-w + 80, Math.min(window.innerWidth - 80, e.clientX - modalDrag.dx));
+  const y = Math.max(0, Math.min(window.innerHeight - 48, e.clientY - modalDrag.dy));
+  box.style.left = x + 'px'; box.style.top = y + 'px';
+}
+function modalDragEnd() { modalDrag = null; document.removeEventListener('mousemove', modalDragMove); }
 $('modalBackdrop').addEventListener('mousedown', (e) => { if (e.target === $('modalBackdrop')) closeModal(); });
 function inputModal(title, label, initial, okLabel, onOk) {
   openModal(title, '<label>' + esc(label) + '</label><input type="text" id="modalInput" value="' + escAttr(initial || '') + '">',
@@ -758,8 +806,9 @@ async function previewFile(f) {
     [
       { label: 'Download', keepOpen: true, onClick: () => downloadItem(f) },
       { label: 'Open in Drive', onClick: () => { if (f.webViewLink) window.open(f.webViewLink, '_blank'); } },
-      { label: 'Close', onClick: closePv },
-    ]);
+      { label: 'Close' },
+    ],
+    closePv);
   const body = $('pvBody');
   try {
     if (kind === 'native') return renderNativePreview(acc, f, body);
@@ -843,6 +892,7 @@ async function renderZipPreview(blob, body) {
       '<div class="pv-ziprow" data-i="' + i + '"><span>📄</span><span class="pv-zipname">' + esc(n) + '</span></div>').join('') + '</div>';
   body.querySelectorAll('.pv-ziprow').forEach((row) => {
     row.onclick = (ev) => {
+      ev.stopPropagation(); // keep the app's global click-closer from instantly dismissing the popup
       const n = names[Number(row.dataset.i)];
       const kind = previewKind({ name: n, mimeType: '' });
       const canView = ['image', 'pdf', 'video', 'audio', 'text', 'docx', 'xlsx'].includes(kind);
