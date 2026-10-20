@@ -262,8 +262,9 @@ async function completeSignIn(resp, expectedEmail) {
   acc.name = (me && me.name) || email; acc.picture = (me && me.picture) || '';
   acc.token = token; acc.expiresAt = expiresAt; acc.needsAuth = false;
   acc.cache.clear();
-  // Always land on My Drive, Level 1 (direct children of root only) after sign-in.
-  acc.nav = { view: 'folder', folderId: 'root', path: [{ id: 'root', name: 'My Drive' }], hist: [], hi: -1 };
+  // Always land on "My Root Drive" after sign-in: ONLY the folders and files
+  // that sit directly on the root — nothing from inside any folder.
+  acc.nav = { view: 'rootdrive', folderId: 'root', path: [{ id: 'rootdrive', name: 'My Root Drive' }], hist: [], hi: -1 };
   acc.selected = new Set();
   persistAccounts();
   await refreshAbout(acc).catch(() => {});
@@ -393,7 +394,7 @@ async function goView(acc, view) {
   acc.selected = new Set(); pushNav(acc); await loadCurrent();
 }
 function viewLabel(v) {
-  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', trash: 'Bin', search: 'Search results' }[v] || v;
+  return { rootdrive: 'My Root Drive', folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', trash: 'Bin', search: 'Search results' }[v] || v;
 }
 
 /* ---------------- Data loading ---------------- */
@@ -424,6 +425,7 @@ async function loadCurrent() {
 }
 async function fetchViewItems(acc, nav) {
   switch (nav.view) {
+    case 'rootdrive': return listChildren(acc, 'root');
     case 'folder': return listChildren(acc, nav.folderId);
     case 'recent': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('trashed=false') + '&orderBy=modifiedTime%20desc&' + LIST_Q());
     case 'starred': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('starred=true and trashed=false') + '&' + LIST_Q());
@@ -582,7 +584,7 @@ function renderItems() {
   // a "Folders" section first, then a "Files" section — never one mixed dump.
   const _folders = items.filter((f) => f.mimeType === FOLDER_MIME);
   const _files = items.filter((f) => f.mimeType !== FOLDER_MIME);
-  const groups = (acc.nav.view === 'folder' && _folders.length && _files.length)
+  const groups = ((acc.nav.view === 'folder' || acc.nav.view === 'rootdrive') && _folders.length && _files.length)
     ? [['Folders', _folders], ['Files', _files]]
     : [[null, items]];
   if (viewMode === 'details') {
@@ -876,6 +878,31 @@ async function uploadPicked(fileList) {
       await uploadBlob(acc, file, file.name, parent, file.type || undefined);
     }
     invalidate(acc); toast(fileList.length + ' file(s) uploaded', 'ok'); await loadCurrent();
+  } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
+}
+async function ensureFolderUpload(acc, name, parentId, cache) {
+  const key = parentId + '|' + name;
+  if (cache.has(key)) return cache.get(key);
+  const created = await driveJson(acc, '/files', jsonOpts('POST', { name, mimeType: FOLDER_MIME, parents: [parentId] }));
+  cache.set(key, created.id);
+  return created.id;
+}
+async function uploadFolderPicked(fileList) {
+  const acc = activeAcc(); if (!acc || !fileList.length) return;
+  const baseParent = acc.nav.view === 'folder' ? acc.nav.folderId : 'root';
+  const folderCache = new Map();
+  setBusy(true, 'Uploading folder…');
+  let done = 0;
+  try {
+    for (const file of fileList) {
+      const parts = (file.webkitRelativePath || file.name).split('/');
+      const fname = parts.pop();
+      let parent = baseParent;
+      for (const seg of parts) parent = await ensureFolderUpload(acc, seg, parent, folderCache);
+      $('busyText').textContent = 'Uploading ' + (file.webkitRelativePath || file.name) + ' (' + (++done) + '/' + fileList.length + ')';
+      await uploadBlob(acc, file, fname, parent, file.type || undefined);
+    }
+    invalidate(acc); toast('Folder uploaded: ' + fileList.length + ' file(s), structure kept', 'ok'); await loadCurrent();
   } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
 }
 
@@ -1189,7 +1216,8 @@ function openAreaMenu(x, y) {
   const sections = [{
     items: [
       { icon: '📁', label: 'New folder', fn: () => createFolderHere() },
-      { icon: '⬆️', label: 'Upload files', fn: () => $('filePicker').click() },
+      { icon: '⬆️', label: 'Upload file', fn: () => $('filePicker').click() },
+      { icon: '📁', label: 'Upload folder', fn: () => $('folderPicker').click() },
       { icon: '📥', label: 'Paste', disabled: !clipboard, fn: () => pasteHere() },
       { icon: '✅', label: 'Select all', fn: () => { acc.selected = new Set(acc.items.map((f) => f.id)); renderItems(); } },
       { icon: '🔄', label: 'Refresh', fn: async () => { invalidate(acc); await loadCurrent(); } },
@@ -1232,7 +1260,15 @@ function wireEvents() {
       const sel = selectedFiles();
       const acc = activeAcc();
       if (c === 'newfolder') createFolderHere();
-      else if (c === 'upload') $('filePicker').click();
+      else if (c === 'upload') {
+        const r = b.getBoundingClientRect();
+        openCtxMenu(r.left, r.bottom + 4, [{
+          items: [
+            { icon: '📄', label: 'Upload file', fn: () => $('filePicker').click() },
+            { icon: '📁', label: 'Upload folder', fn: () => $('folderPicker').click() },
+          ],
+        }]);
+      }
       else if (c === 'cut') setClipboard('cut');
       else if (c === 'copy') setClipboard('copy');
       else if (c === 'paste') pasteHere();
@@ -1292,6 +1328,7 @@ function wireEvents() {
   });
 
   $('filePicker').addEventListener('change', (e) => { uploadPicked(e.target.files); e.target.value = ''; });
+  $('folderPicker').addEventListener('change', (e) => { uploadFolderPicked(e.target.files); e.target.value = ''; });
   $('contentArea').addEventListener('contextmenu', (e) => {
     if (e.target.closest('tr[data-id]') || e.target.closest('.tile') || e.target.closest('.list-row')) return;
     e.preventDefault(); openAreaMenu(e.clientX, e.clientY);
