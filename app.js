@@ -710,9 +710,126 @@ function openItem(f) {
     goFolder(acc, f.id, path);
   } else if (f.mimeType === SHORTCUT_MIME && f.shortcutDetails && f.shortcutDetails.targetId) {
     getFile(acc, f.shortcutDetails.targetId).then((t) => openItem(t)).catch((e) => toast(e.message, 'err'));
-  } else if (f.webViewLink) {
-    window.open(f.webViewLink, '_blank');
+  } else {
+    previewFile(f);
   }
+}
+
+/* ---------------- In-app file preview ---------------- */
+let lastPreviewUrl = null;
+function revokePreviewUrl() { if (lastPreviewUrl) { try { URL.revokeObjectURL(lastPreviewUrl); } catch (e) {} lastPreviewUrl = null; } }
+function previewObjectUrl(blob) { revokePreviewUrl(); lastPreviewUrl = URL.createObjectURL(blob); return lastPreviewUrl; }
+function fileExt(name) { const m = /(?:\.([^.\\/]{1,8}))$/.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
+const TEXT_EXTS = ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'xml', 'html', 'htm', 'css', 'js', 'ts', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'sh', 'yaml', 'yml', 'ini', 'sql', 'php', 'rb', 'go', 'rs'];
+function previewKind(f) {
+  const mt = f.mimeType || '', ext = fileExt(f.name);
+  if (mt === FOLDER_MIME || mt === SHORTCUT_MIME) return 'none';
+  if (isNative(f)) return 'native';
+  if (mt.startsWith('image/')) return 'image';
+  if (mt === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (mt.startsWith('video/')) return 'video';
+  if (mt.startsWith('audio/')) return 'audio';
+  if (mt.startsWith('text/') || TEXT_EXTS.includes(ext)) return 'text';
+  if (mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || ext === 'docx') return 'docx';
+  if (mt === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || ext === 'xlsx' || ext === 'xls') return 'xlsx';
+  if (ext === 'zip') return 'zip';
+  return 'other';
+}
+async function previewFile(f) {
+  const acc = activeAcc(); if (!acc) return;
+  const kind = previewKind(f);
+  $('modalBox').classList.add('wide');
+  const closePv = () => { revokePreviewUrl(); $('modalBox').classList.remove('wide'); };
+  openModal('👁️ ' + f.name,
+    '<div id="pvBody" class="pv-body"><div class="pv-loading">Loading preview…</div></div>',
+    [
+      { label: 'Download', keepOpen: true, onClick: () => downloadItem(f) },
+      { label: 'Open in Drive', onClick: () => { if (f.webViewLink) window.open(f.webViewLink, '_blank'); } },
+      { label: 'Close', onClick: closePv },
+    ]);
+  const body = $('pvBody');
+  try {
+    if (kind === 'native') return renderNativePreview(acc, f, body);
+    if (kind === 'other') return renderOtherPreview(f, body);
+    setBusy(true, 'Loading preview…');
+    const { blob } = await fetchFileBlob(acc, f);
+    setBusy(false);
+    const url = previewObjectUrl(blob);
+    if (kind === 'image') body.innerHTML = '<img class="pv-img" src="' + url + '" alt="">';
+    else if (kind === 'pdf') body.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
+    else if (kind === 'video') body.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video><p class="pv-note">Large videos download fully before playing — give it a moment.</p>';
+    else if (kind === 'audio') body.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
+    else if (kind === 'text') { const t = await blob.text(); body.innerHTML = '<pre class="pv-text">' + esc(t.slice(0, 200000)) + (t.length > 200000 ? '\n…(truncated)' : '') + '</pre>'; }
+    else if (kind === 'docx') await renderDocxPreview(blob, body);
+    else if (kind === 'xlsx') await renderXlsxPreview(blob, body);
+    else if (kind === 'zip') await renderZipPreview(blob, body);
+  } catch (e) {
+    setBusy(false);
+    body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '<br><br>Use Download or Open in Drive below.</div>';
+  }
+}
+async function renderNativePreview(acc, f, body) {
+  const exp = EXPORT_MAP[f.mimeType];
+  const label = { 'application/vnd.google-apps.document': 'Google Doc', 'application/vnd.google-apps.spreadsheet': 'Google Sheet', 'application/vnd.google-apps.presentation': 'Google Slides', 'application/vnd.google-apps.drawing': 'Google Drawing' }[f.mimeType] || 'Google file';
+  if (exp && exp[0] === 'application/pdf') {
+    setBusy(true, 'Loading preview…');
+    try {
+      const res = await drive(acc, '/files/' + f.id + '/export?mimeType=' + encodeURIComponent(exp[0]));
+      const url = previewObjectUrl(await res.blob());
+      body.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
+    } catch (e) { body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '</div>'; }
+    finally { setBusy(false); }
+    return;
+  }
+  body.innerHTML = '<div class="pv-info">This is a ' + esc(label) + ' — it opens best in its Google app.<br>Use <b>Open in Drive</b> below.</div>';
+}
+function renderOtherPreview(f, body) {
+  body.innerHTML = '<div class="pv-info">No in-app preview for this file type yet (' + esc(typeLabel(f.mimeType, f.name)) + ').<br>Use <b>Download</b> or <b>Open in Drive</b> below.</div>';
+}
+async function renderDocxPreview(blob, body) {
+  if (!window.mammoth) throw new Error('document viewer library could not be loaded — check your internet connection.');
+  const ab = await blob.arrayBuffer();
+  const out = await window.mammoth.convertToHtml({ arrayBuffer: ab });
+  body.innerHTML = '<div class="pv-doc">' + (out.value || '<p class="pv-note">(Empty document)</p>') + '</div>';
+}
+async function renderXlsxPreview(blob, body) {
+  if (!window.XLSX) throw new Error('spreadsheet viewer library could not be loaded — check your internet connection.');
+  const ab = await blob.arrayBuffer();
+  const wb = window.XLSX.read(ab, { type: 'array' });
+  const names = wb.SheetNames.slice(0, 20);
+  if (!names.length) throw new Error('no sheets found in this workbook.');
+  body.innerHTML = '<div class="pv-tabs">' + names.map((n, i) => '<button class="pv-tab' + (i ? '' : ' active') + '" data-sh="' + i + '">' + esc(n) + '</button>').join('') + '</div><div id="pvSheet"></div>';
+  const show = (i) => {
+    const ws = wb.Sheets[names[i]];
+    const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).slice(0, 500).map((r) => r.slice(0, 50));
+    $('pvSheet').innerHTML = '<div class="pv-sheet"><table>' + rows.map((r, ri) =>
+      '<tr>' + r.map((c) => (ri === 0 ? '<th>' : '<td>') + esc(String(c)) + (ri === 0 ? '</th>' : '</td>')).join('') + '</tr>').join('') + '</table></div>';
+    body.querySelectorAll('.pv-tab').forEach((b, j) => b.classList.toggle('active', j === i));
+  };
+  body.querySelectorAll('.pv-tab').forEach((b) => { b.onclick = () => show(Number(b.dataset.sh)); });
+  show(0);
+}
+async function renderZipPreview(blob, body) {
+  if (!window.JSZip) throw new Error('ZIP viewer library could not be loaded — check your internet connection.');
+  const zip = await window.JSZip.loadAsync(blob);
+  const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir).sort();
+  if (!names.length) { body.innerHTML = '<div class="pv-info">This archive is empty.</div>'; return; }
+  body.innerHTML = '<div class="pv-ziphead">' + names.length + ' file(s) in this archive — click any file to download it.</div>' +
+    '<div class="pv-ziplist">' + names.map((n, i) =>
+      '<div class="pv-ziprow" data-i="' + i + '"><span>📄</span><span class="pv-zipname">' + esc(n) + '</span></div>').join('') + '</div>';
+  body.querySelectorAll('.pv-ziprow').forEach((row) => {
+    row.onclick = async () => {
+      const n = names[Number(row.dataset.i)];
+      try {
+        const b = await zip.files[n].async('blob');
+        const u = URL.createObjectURL(b);
+        const a = document.createElement('a'); a.href = u; a.download = n.split('/').pop();
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 4000);
+        toast('Downloading: ' + n.split('/').pop(), 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  });
 }
 
 /* Details pane */
@@ -1185,6 +1302,7 @@ function openItemMenu(x, y, files) {
   sections.push({
     items: [
       single && single.mimeType === FOLDER_MIME ? { icon: '📂', label: 'Open', fn: () => openItem(single) } : null,
+      single && single.mimeType !== FOLDER_MIME ? { icon: '👁️', label: 'Preview', fn: () => previewFile(single) } : null,
       single ? { icon: '⬇️', label: 'Download', fn: () => downloadItem(single) } : null,
       single && single.starred ? { icon: '⭐', label: 'Remove star', fn: () => toggleStar(single) } : single ? { icon: '⭐', label: 'Add star', fn: () => toggleStar(single) } : null,
     ].filter(Boolean),
