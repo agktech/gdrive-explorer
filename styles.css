@@ -347,3 +347,4 @@ button { font-family: inherit; }
 .pv-text, .pv-doc, .pv-sheet { user-select: text; }
 .pv-text { cursor: text; }
 .pv-texthdr { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.cmd svg.cmd-ic { width: 17px; height: 17px; }
