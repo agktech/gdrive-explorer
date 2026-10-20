@@ -49,7 +49,7 @@
   <!-- ===== Command bar ===== -->
   <div class="commandbar" id="commandBar">
     <button class="cmd" data-cmd="newfolder" title="New folder">&#128193;<span>New folder</span></button>
-    <button class="cmd" data-cmd="upload" title="Upload files">&#11014;<span>Upload</span></button>
+    <button class="cmd" data-cmd="upload" title="Upload a file or a whole folder">&#11014;<span>Upload &#9662;</span></button>
     <div class="cmd-sep"></div>
     <button class="cmd" data-cmd="cut" title="Cut (Ctrl+X)">&#9986;<span>Cut</span></button>
     <button class="cmd" data-cmd="copy" title="Copy (Ctrl+C)">&#128203;<span>Copy</span></button>
@@ -80,6 +80,7 @@
   <div class="main">
     <aside class="sidebar">
       <div class="side-section" id="sideLibrary">
+        <div class="side-item" data-view="rootdrive">&#128189;<span>My Root Drive</span></div>
         <div class="side-item" data-view="folder-root">&#127968;<span>My Drive</span></div>
         <div class="side-item" data-view="recent">&#128339;<span>Recent</span></div>
         <div class="side-item" data-view="starred">&#11088;<span>Starred</span></div>
@@ -155,6 +156,7 @@
 
 <div class="toasts" id="toasts"></div>
 <input type="file" id="filePicker" multiple class="hidden">
+<input type="file" id="folderPicker" webkitdirectory class="hidden">
 
 <script src="app.js"></script>
 <script>
