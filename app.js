@@ -262,6 +262,9 @@ async function completeSignIn(resp, expectedEmail) {
   acc.name = (me && me.name) || email; acc.picture = (me && me.picture) || '';
   acc.token = token; acc.expiresAt = expiresAt; acc.needsAuth = false;
   acc.cache.clear();
+  // Always land on My Drive, Level 1 (direct children of root only) after sign-in.
+  acc.nav = { view: 'folder', folderId: 'root', path: [{ id: 'root', name: 'My Drive' }], hist: [], hi: -1 };
+  acc.selected = new Set();
   persistAccounts();
   await refreshAbout(acc).catch(() => {});
   renderChips();
@@ -575,10 +578,24 @@ function renderItems() {
   const items = acc.items;
   $('statusCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
   updateSelStatus();
+  // Folder views (incl. My Drive Level 1) are grouped like Google Drive:
+  // a "Folders" section first, then a "Files" section — never one mixed dump.
+  const _folders = items.filter((f) => f.mimeType === FOLDER_MIME);
+  const _files = items.filter((f) => f.mimeType !== FOLDER_MIME);
+  const groups = (acc.nav.view === 'folder' && _folders.length && _files.length)
+    ? [['Folders', _folders], ['Files', _files]]
+    : [[null, items]];
   if (viewMode === 'details') {
     table.classList.remove('hidden'); grid.classList.add('hidden');
     body.innerHTML = '';
-    for (const f of items) {
+    for (const [gLabel, gItems] of groups) {
+      if (gLabel) {
+        const gh = document.createElement('tr');
+        gh.className = 'group-row';
+        gh.innerHTML = '<td colspan="5">' + (gLabel === 'Folders' ? '&#128193;' : '&#128196;') + ' ' + gLabel + ' <span class="group-count">' + gItems.length + '</span></td>';
+        body.appendChild(gh);
+      }
+      for (const f of gItems) {
       const { sel, sc } = itemRowHTML(f);
       const tr = document.createElement('tr');
       if (sel) tr.className = 'selected';
@@ -591,12 +608,20 @@ function renderItems() {
         '<td>' + esc(accessOf(f)) + '</td>';
       wireItemEvents(tr, f);
       body.appendChild(tr);
+      }
     }
   } else {
     table.classList.add('hidden'); grid.classList.remove('hidden');
     grid.className = 'grid-view' + (viewMode === 'list' ? ' list-rows' : '');
     grid.innerHTML = '';
-    for (const f of items) {
+    for (const [gLabel, gItems] of groups) {
+      if (gLabel) {
+        const gh = document.createElement('div');
+        gh.className = 'group-head';
+        gh.innerHTML = (gLabel === 'Folders' ? '&#128193;' : '&#128196;') + ' ' + gLabel + ' <span class="group-count">' + gItems.length + '</span>';
+        grid.appendChild(gh);
+      }
+      for (const f of gItems) {
       const { sel, sc } = itemRowHTML(f);
       const el = document.createElement('div');
       if (viewMode === 'list') {
@@ -610,6 +635,7 @@ function renderItems() {
       el.dataset.id = f.id;
       wireItemEvents(el, f);
       grid.appendChild(el);
+      }
     }
   }
   document.querySelectorAll('#detailsTable thead th').forEach((th) => {
