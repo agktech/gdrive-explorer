@@ -322,9 +322,11 @@ async function grantPhotosAccess() {
     return true;
   } finally { setBusy(false); }
 }
-function offerPhotosConsent() {
+function offerPhotosConsent(detail) {
   openModal('Google Photos permission',
-    '<div class="pv-info">The app needs your permission to open the Google Photos picker.<br><br>Click <b>Grant access</b> — on the Google screen, tick the <b>Google Photos</b> checkbox, then click <b>Continue</b>. The picker will open right after.</div>',
+    '<div class="pv-info">The app needs your permission to open the Google Photos picker.' +
+    (detail ? '<br><br><span class="pv-note">' + esc(detail) + '</span><br>' : '<br>') +
+    '<br>Click <b>Grant access</b> — on the Google screen, tick the <b>Google Photos</b> checkbox, then click <b>Continue</b>. The picker will open right after.</div>',
     [
       { label: 'Cancel' },
       {
@@ -774,7 +776,12 @@ async function photosApi(acc, path, opts) {
     acc.needsAuth = true; acc.token = null; persistAccounts(); renderChips();
     throw new Error('Session expired — click your drive chip to sign in again.');
   }
-  if (res.status === 403) { const err = new Error('Google Photos permission is missing on this sign-in.'); err.status = 403; throw err; }
+  if (res.status === 403) {
+    let detail = '';
+    try { const j = await res.clone().json(); if (j.error && j.error.message) detail = j.error.message; } catch (e) {}
+    const err = new Error('Google Photos permission is missing on this sign-in.' + (detail ? ' Google says: ' + detail : ''));
+    err.status = 403; throw err;
+  }
   if (!res.ok) {
     let msg = res.status + ' ' + res.statusText;
     try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
@@ -829,7 +836,7 @@ async function importFromPhotos() {
     toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
     if (acc.nav.view === 'photos' || acc.nav.view === 'videos') renderPickedView(acc);
   } catch (e) {
-    if (e && e.status === 403) { setBusy(false); offerPhotosConsent(); return; }
+    if (e && e.status === 403) { setBusy(false); offerPhotosConsent(e.message); return; }
     toast(e.message, 'err');
   } finally { setBusy(false); }
 }
