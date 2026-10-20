@@ -812,10 +812,14 @@ async function importFromPhotos() {
   importInProgress = true;
   setBusy(true, 'Starting Google Photos picker…');
   try {
-    // Retire the previous session (if any) — its links are replaced by the new import.
-    if (acc.photoSessionId) { try { await photosApi(acc, '/sessions/' + acc.photoSessionId, { method: 'DELETE' }); } catch (e) {} acc.photoSessionId = null; }
     const sess = await (await photosApi(acc, '/sessions', { method: 'POST', body: '{}' })).json();
     if (!sess.id || !sess.pickerUri) throw new Error('Could not start the Google Photos picker.');
+    // Keep every session alive — deleting one kills its photo links at once.
+    // Sessions expire on Google's side automatically.
+    acc.photoSessions = acc.photoSessions || [];
+    if (acc.photoSessionId && !acc.photoSessions.includes(acc.photoSessionId)) acc.photoSessions.push(acc.photoSessionId);
+    acc.photoSessionId = null;
+    acc.photoSessions.push(sess.id);
     setBusy(false);
     window.open(sess.pickerUri, '_blank');
     toast('Pick photos/videos in the Google tab — I’ll fetch them when you’re done.', 'ok');
@@ -839,10 +843,7 @@ async function importFromPhotos() {
         pageToken = r.nextPageToken || '';
       } while (pageToken);
     }
-    // NOTE: the session is intentionally kept alive — deleting it can invalidate
-    // the photo links immediately. Google expires sessions automatically.
-    if (!items.length) { toast('The picker finished but returned no items — make sure you tick photos/videos and click Done in the Google tab, then import again.', 'err'); return; }
-    acc.photoSessionId = sess.id;
+    if (!items.length) { toast('The picker finished but returned no items — make sure you tick photos/videos and click Done in the Google tab. You can also press ↻ Refresh links to check again.', 'err'); return; }
     acc.picked = (acc.picked || []).concat(items);
     const np = items.filter((p) => p.kind === 'photo').length;
     toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
@@ -853,19 +854,22 @@ async function importFromPhotos() {
   } finally { setBusy(false); importInProgress = false; }
 }
 let importInProgress = false;
-// Re-list the current picker session to get fresh photo links (links expire).
+// Re-list all kept picker sessions to get fresh photo links (links expire).
 async function refreshPickedLinks(quiet) {
   const acc = activeAcc();
-  if (!acc || !acc.photoSessionId) { if (!quiet) toast('Nothing to refresh — import first.', 'err'); return 0; }
+  const sessions = (acc && acc.photoSessions) || [];
+  if (!acc || !sessions.length) { if (!quiet) toast('Nothing to refresh — import first.', 'err'); return 0; }
   if (!quiet) setBusy(true, 'Refreshing photo links…');
   try {
     const map = {};
-    let pageToken = '';
-    do {
-      const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(acc.photoSessionId) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
-      (r.mediaItems || []).forEach((m) => { const mf = m.mediaFile || {}; if (mf.baseUrl) map[m.id] = mf.baseUrl; });
-      pageToken = r.nextPageToken || '';
-    } while (pageToken);
+    for (const sid of sessions) {
+      let pageToken = '';
+      do {
+        const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(sid) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
+        (r.mediaItems || []).forEach((m) => { const mf = m.mediaFile || {}; if (mf.baseUrl) map[m.id] = mf.baseUrl; });
+        pageToken = r.nextPageToken || '';
+      } while (pageToken);
+    }
     let n = 0;
     (acc.picked || []).forEach((p) => { if (map[p.pid]) { p.baseUrl = map[p.pid]; n++; } });
     if (!quiet) toast(n ? 'Refreshed ' + n + ' link(s).' : 'No fresh links found — import again.', n ? 'ok' : 'err');
@@ -873,6 +877,15 @@ async function refreshPickedLinks(quiet) {
     return n;
   } catch (e) { if (!quiet) toast(e.message, 'err'); return 0; }
   finally { if (!quiet) setBusy(false); }
+}
+// Discard all picked items for this account (their sessions are retired too).
+async function clearPicked() {
+  const acc = activeAcc(); if (!acc) return;
+  if (!confirm('Remove all picked photos/videos from this view?')) return;
+  for (const sid of (acc.photoSessions || [])) { try { await photosApi(acc, '/sessions/' + sid, { method: 'DELETE' }); } catch (e) {} }
+  acc.photoSessions = []; acc.photoSessionId = null; acc.picked = [];
+  if (acc.nav.view === 'media') renderPickedView(acc);
+  toast('Cleared.', 'ok');
 }
 // Fetch a picked item's bytes; refreshes links once and retries if the link expired.
 async function fetchPickedBytes(p) {
@@ -901,10 +914,12 @@ function renderPickedView(acc) {
   bar.className = 'picked-bar';
   bar.innerHTML = '<button class="btn primary" id="importPhotosBtn">📷 Import from Google Photos</button>' +
     '<button class="btn" id="refreshLinksBtn" title="Get fresh photo links">↻ Refresh links</button>' +
+    '<button class="btn" id="clearPicksBtn" title="Remove all picked items">✕ Clear</button>' +
     '<span class="pv-note">Picks stay for this session only — import again after reloading the page.</span>';
   grid.appendChild(bar);
   $('importPhotosBtn').onclick = importFromPhotos;
   $('refreshLinksBtn').onclick = () => refreshPickedLinks(false);
+  $('clearPicksBtn').onclick = clearPicked;
   if (!items.length) {
     const d = document.createElement('div'); d.className = 'pv-info';
     d.innerHTML = 'Nothing here yet.<br>Click <b>Import from Google Photos</b> to pick photos and videos and view them here.';
