@@ -97,8 +97,6 @@ function typeIcon(file) {
   };
   return icons[t] || '&#128196;';
 }
-// Social-media style share icon (small, 12px) for "shared with me".
-const SHARE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v13"/><path d="M7.5 7.5 12 3l4.5 4.5"/></svg>';
 function ownerName(file) {
   const o = (file.owners && file.owners[0]) || {};
   return o.displayName || o.emailAddress || '—';
@@ -124,9 +122,9 @@ function accessOf(file, myEmail) {
 }
 function accessBadge(file, myEmail) {
   const a = accessOf(file, myEmail);
-  if (a === 'public') return '<span class="badge public" title="Public — anyone with the link">&#127760;</span>';
+  if (a === 'public') return '<span class="badge public" title="Public — shared by link">&#127760;</span>';
   if (a === 'shared-by-me') return '<span class="badge sharedbyme" title="Shared by me">&#128101;</span>';
-  if (a === 'shared-with-me') return '<span class="badge sharedwithme" title="Shared with me by ' + escAttr(ownerName(file)) + '">' + SHARE_ICON_SVG + '</span>';
+  if (a === 'shared-with-me') return '<span class="badge sharedwithme" title="Shared with me by ' + escAttr(ownerName(file)) + '">&#128100;</span>';
   return ''; // private and mine: no badge, just the folder/file icon
 }
 function accessLabel(file, myEmail) {
@@ -739,7 +737,7 @@ function renderDetailsPane() {
     ['Modified', fmtDate(f.modifiedTime)],
     ['Created', fmtDate(f.createdTime)],
     ['Owner', owner],
-    ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '📤 Shared with me by ' + ownerName(f) : '🔒 Private'],
+    ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '👤 Shared with me by ' + ownerName(f) : '🔒 Private'],
     ['Account', acc.email],
   ];
   $('dpRows').innerHTML = rows.map((r) => '<div class="dp-row"><span class="k">' + esc(r[0]) + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('');
@@ -1077,7 +1075,7 @@ async function sharePanel(f) {
   try { perms = await listPerms(acc, f.id); } catch (e) { setBusy(false); toast(e.message, 'err'); return; }
   setBusy(false);
   const a = accessOf(f, acc.email);
-  const badge = a === 'public' ? '🌐 <b>Public</b> — anyone with the link' : a === 'shared-by-me' ? '👥 <b>Shared by me</b>' : a === 'shared-with-me' ? '📤 <b>Shared with me</b> by ' + esc(ownerName(f)) : '🔒 <b>Private</b> — only you';
+  const badge = a === 'public' ? '🌐 <b>Public</b> — anyone with the link' : a === 'shared-by-me' ? '👥 <b>Shared by me</b>' : a === 'shared-with-me' ? '👤 <b>Shared with me</b> by ' + esc(ownerName(f)) : '🔒 <b>Private</b> — only you';
   openModal('Share "' + f.name + '"',
     '<p>Status: ' + badge + '</p>' +
     '<div id="permList">' + perms.map(permRowHTML).join('') + '</div>' +
@@ -1142,7 +1140,7 @@ function propertiesDialog(f) {
     '<div class="dp-rows">' +
     [['Name', f.name], ['Type', typeLabel(f.mimeType, f.name)], ['Size', f.mimeType === FOLDER_MIME ? '—' : fmtBytes(f.size)],
      ['Created', fmtDate(f.createdTime)], ['Modified', fmtDate(f.modifiedTime)], ['Owner', owner],
-     ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '📤 Shared with me by ' + owner : '🔒 Private'],
+     ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '👤 Shared with me by ' + owner : '🔒 Private'],
      ['Account', acc ? acc.email : '—']]
       .map((r) => '<div class="dp-row"><span class="k">' + esc(r[0]) + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('') +
     '</div>',
