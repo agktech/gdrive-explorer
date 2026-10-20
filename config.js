@@ -5,5 +5,5 @@
 //   https://gdrive-explorer.pages.dev
 // The client ID is a public identifier for a browser app (not a secret).
 window.GDRIVE_EXPLORER_CONFIG = {
-  clientId: "PASTE_CLIENT_ID"
+  clientId: "507502668135-cf317sri3nuipd0tir6sog1bj2ooaf32.apps.googleusercontent.com"
 };
