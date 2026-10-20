@@ -828,15 +828,20 @@ async function importFromPhotos() {
     }
     if (!done) throw new Error('Timed out waiting for the picker — try again.');
     const items = [];
-    let pageToken = '';
-    do {
-      const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(sess.id) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
-      (r.mediaItems || []).forEach((m) => { if (m.mediaFile && m.mediaFile.baseUrl) items.push(pickItem(m)); });
-      pageToken = r.nextPageToken || '';
-    } while (pageToken);
+    // The list can briefly come back empty right after Done — retry a few times.
+    for (let attempt = 0; attempt < 6 && !items.length; attempt++) {
+      if (attempt) await sleep(3000);
+      let pageToken = '';
+      do {
+        const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(sess.id) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
+        try { console.log('[photos] list attempt ' + (attempt + 1) + ': ' + JSON.stringify(r).slice(0, 300)); } catch (e) {}
+        (r.mediaItems || []).forEach((m) => { if (m.mediaFile && m.mediaFile.baseUrl) items.push(pickItem(m)); });
+        pageToken = r.nextPageToken || '';
+      } while (pageToken);
+    }
     // NOTE: the session is intentionally kept alive — deleting it can invalidate
     // the photo links immediately. Google expires sessions automatically.
-    if (!items.length) { toast('No items were picked.', 'err'); return; }
+    if (!items.length) { toast('The picker finished but returned no items — make sure you tick photos/videos and click Done in the Google tab, then import again.', 'err'); return; }
     acc.photoSessionId = sess.id;
     acc.picked = (acc.picked || []).concat(items);
     const np = items.filter((p) => p.kind === 'photo').length;
