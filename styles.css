@@ -244,7 +244,7 @@ button { font-family: inherit; }
 
 /* ===== Context menu ===== */
 .ctx {
-  position: fixed; z-index: 1000; min-width: 250px; max-height: 70vh; overflow-y: auto;
+  position: fixed; z-index: 1200; min-width: 250px; max-height: 70vh; overflow-y: auto;
   background: #fff; border: 1px solid #cfd4da; border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 4px;
 }
