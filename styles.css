@@ -343,3 +343,7 @@ button { font-family: inherit; }
 .pv-error { padding: 24px; color: #b00020; line-height: 1.6; }
 .pv-zippreview { margin-top: 10px; border-top: 1px solid #e3e3e3; padding-top: 10px; }
 .pv-zippreview-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+/* Text selection + copy inside previews (the app shell disables selection by default) */
+.pv-text, .pv-doc, .pv-sheet { user-select: text; }
+.pv-text { cursor: text; }
+.pv-texthdr { display: flex; justify-content: flex-end; margin-bottom: 6px; }
