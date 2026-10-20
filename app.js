@@ -818,18 +818,48 @@ async function renderZipPreview(blob, body) {
     '<div class="pv-ziplist">' + names.map((n, i) =>
       '<div class="pv-ziprow" data-i="' + i + '"><span>📄</span><span class="pv-zipname">' + esc(n) + '</span></div>').join('') + '</div>';
   body.querySelectorAll('.pv-ziprow').forEach((row) => {
-    row.onclick = async () => {
+    row.onclick = (ev) => {
       const n = names[Number(row.dataset.i)];
-      try {
-        const b = await zip.files[n].async('blob');
-        const u = URL.createObjectURL(b);
-        const a = document.createElement('a'); a.href = u; a.download = n.split('/').pop();
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(u), 4000);
-        toast('Downloading: ' + n.split('/').pop(), 'ok');
-      } catch (e) { toast(e.message, 'err'); }
+      const kind = previewKind({ name: n, mimeType: '' });
+      const canView = ['image', 'pdf', 'video', 'audio', 'text', 'docx', 'xlsx'].includes(kind);
+      openCtxMenu(ev.clientX, ev.clientY, [{ items: [
+        canView ? { icon: '👁️', label: 'View', fn: () => viewZipEntry(zip, n, $('pvZipView')) } : null,
+        { icon: '⬇️', label: 'Download', fn: () => downloadZipEntry(zip, n) },
+      ].filter(Boolean) }]);
     };
   });
+}
+async function downloadZipEntry(zip, entryName) {
+  try {
+    const b = await zip.files[entryName].async('blob');
+    const u = URL.createObjectURL(b);
+    const a = document.createElement('a'); a.href = u; a.download = entryName.split('/').pop();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 4000);
+    toast('Downloading: ' + entryName.split('/').pop(), 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function viewZipEntry(zip, entryName, viewEl) {
+  viewEl.innerHTML = '<div class="pv-loading">Loading preview…</div>';
+  try {
+    const b = await zip.files[entryName].async('blob');
+    const kind = previewKind({ name: entryName, mimeType: '' });
+    viewEl.innerHTML = '<div class="pv-zippreview"><div class="pv-zippreview-head"><span>👁️ ' + esc(entryName.split('/').pop()) + '</span><button class="btn" id="pvZipClose">Close preview</button></div><div id="pvZipContent"></div></div>';
+    const content = $('pvZipContent');
+    if (kind === 'docx') await renderDocxPreview(b, content);
+    else if (kind === 'xlsx') await renderXlsxPreview(b, content);
+    else {
+      const url = previewObjectUrl(b);
+      if (kind === 'image') content.innerHTML = '<img class="pv-img" src="' + url + '" alt="">';
+      else if (kind === 'pdf') content.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
+      else if (kind === 'video') content.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video>';
+      else if (kind === 'audio') content.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
+      else if (kind === 'text') { const t = await b.text(); content.innerHTML = '<pre class="pv-text">' + esc(t.slice(0, 200000)) + (t.length > 200000 ? '\n…(truncated)' : '') + '</pre>'; }
+    }
+    $('pvZipClose').onclick = () => { viewEl.innerHTML = ''; revokePreviewUrl(); };
+  } catch (e) {
+    viewEl.innerHTML = '<div class="pv-error">Could not preview: ' + esc(e.message) + '</div>';
+  }
 }
 
 /* Details pane */
