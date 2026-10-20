@@ -887,18 +887,24 @@ async function clearPicked() {
   if (acc.nav.view === 'media') renderPickedView(acc);
   toast('Cleared.', 'ok');
 }
-// Fetch a picked item's bytes; refreshes links once and retries if the link expired.
+// Fetch a picked item's bytes.
+// Tries anonymous first, then with the OAuth token (some picker URLs require it),
+// then refreshes links once and retries both ways.
 async function fetchPickedBytes(p) {
-  const tryFetch = async () => {
-    const res = await fetch(pickedBytesUrl(p));
-    if (!res.ok) throw new Error('Photo service returned ' + res.status);
+  const acc = activeAcc();
+  const tryFetch = async (withAuth) => {
+    const opts = (withAuth && acc && acc.token) ? { headers: { 'Authorization': 'Bearer ' + acc.token } } : undefined;
+    const res = await fetch(pickedBytesUrl(p), opts);
+    if (!res.ok) throw new Error('Photo service returned ' + res.status + (withAuth ? ' (authed)' : ''));
     return res.blob();
   };
-  try { return await tryFetch(); }
-  catch (e) {
-    const n = await refreshPickedLinks(true);
-    if (n) return tryFetch();
-    throw e;
+  const attempts = [false, true];
+  try { return await tryFetch(false); } catch (e1) {
+    try { return await tryFetch(true); } catch (e2) {
+      const n = await refreshPickedLinks(true);
+      if (!n) throw e2;
+      try { return await tryFetch(false); } catch (e3) { return tryFetch(true); }
+    }
   }
 }
 function renderPickedView(acc) {
