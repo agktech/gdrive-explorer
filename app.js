@@ -9,7 +9,7 @@
 const CFG = (window.GDRIVE_EXPLORER_CONFIG || {});
 const CLIENT_ID = (CFG.clientId || '').trim();
 const CONFIGURED = !!CLIENT_ID && CLIENT_ID !== 'PASTE_CLIENT_ID';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive openid email profile';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/photospicker.mediaitems.readonly openid email profile';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -477,7 +477,7 @@ async function goView(acc, view) {
   acc.selected = new Set(); pushNav(acc); await loadCurrent();
 }
 function viewLabel(v) {
-  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', sharedbyme: 'Shared by me', trash: 'Bin', search: 'Search results' }[v] || v;
+  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', sharedbyme: 'Shared by me', photos: 'My Photos', videos: 'My Videos', trash: 'Bin', search: 'Search results' }[v] || v;
 }
 
 /* ---------------- Data loading ---------------- */
@@ -663,6 +663,7 @@ function renderItems() {
   const acc = activeAcc();
   const table = $('detailsTable'), grid = $('gridView'), body = $('detailsBody');
   if (!acc) { body.innerHTML = ''; grid.innerHTML = ''; return; }
+  if (acc.nav.view === 'photos' || acc.nav.view === 'videos') return renderPickedView(acc);
   const items = acc.items;
   $('statusCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
   updateSelStatus();
@@ -732,6 +733,158 @@ function renderItems() {
     if (ind) ind.textContent = k === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
   });
   renderDetailsPane();
+}
+
+/* ---------------- Google Photos picks (My Photos / My Videos) ---------------- */
+const PHOTOS_API = 'https://photospicker.googleapis.com/v1';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function pickedItems(acc, kind) { return (acc.picked || []).filter((p) => p.kind === kind); }
+async function photosApi(acc, path, opts) {
+  if (!acc || !acc.token) throw new Error('Not signed in. Click your drive chip to sign in again.');
+  const res = await fetch(PHOTOS_API + path, Object.assign({ headers: { Authorization: 'Bearer ' + acc.token, 'Content-Type': 'application/json' } }, opts || {}));
+  if (res.status === 401) {
+    acc.needsAuth = true; acc.token = null; persistAccounts(); renderChips();
+    throw new Error('Session expired — click your drive chip to sign in again.');
+  }
+  if (res.status === 403) throw new Error('Google Photos access was not granted — please Sign out and sign in again, ticking the Google Photos permission.');
+  if (!res.ok) {
+    let msg = res.status + ' ' + res.statusText;
+    try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+    throw new Error(msg);
+  }
+  return res;
+}
+function pickItem(m) {
+  const isVideo = (m.mimeType || '').startsWith('video/');
+  const mm = m.mediaMetadata || {};
+  return {
+    pid: m.id, name: m.filename || (isVideo ? 'video.mp4' : 'photo.jpg'),
+    mimeType: m.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+    baseUrl: m.baseUrl, kind: isVideo ? 'video' : 'photo',
+    createTime: mm.creationTime || new Date().toISOString(),
+    duration: mm.video && mm.video.duration ? mm.video.duration : null,
+  };
+}
+function pickedBytesUrl(p) { return p.baseUrl + (p.kind === 'video' ? '=dv' : '=d'); }
+function fmtDuration(d) {
+  const s = Math.round(parseFloat(d) || 0);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+async function importFromPhotos() {
+  const acc = activeAcc(); if (!acc || acc.needsAuth) { toast('Connect a drive first.', 'err'); return; }
+  setBusy(true, 'Starting Google Photos picker…');
+  try {
+    const sess = await (await photosApi(acc, '/sessions', { method: 'POST', body: '{}' })).json();
+    if (!sess.id || !sess.pickerUri) throw new Error('Could not start the Google Photos picker.');
+    setBusy(false);
+    window.open(sess.pickerUri, '_blank');
+    toast('Pick photos/videos in the Google tab — I’ll fetch them when you’re done.', 'ok');
+    setBusy(true, 'Waiting for your picks…');
+    let done = false;
+    for (let i = 0; i < 120; i++) {
+      await sleep(3000);
+      const st = await (await photosApi(acc, '/sessions/' + sess.id)).json();
+      if (st.mediaItemsSet) { done = true; break; }
+    }
+    if (!done) throw new Error('Timed out waiting for the picker — try again.');
+    const items = [];
+    let pageToken = '';
+    do {
+      const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(sess.id) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
+      (r.mediaItems || []).forEach((m) => { if (m.baseUrl) items.push(pickItem(m)); });
+      pageToken = r.nextPageToken || '';
+    } while (pageToken);
+    try { await photosApi(acc, '/sessions/' + sess.id, { method: 'DELETE' }); } catch (e) {}
+    if (!items.length) { toast('No items were picked.', 'err'); return; }
+    acc.picked = (acc.picked || []).concat(items);
+    const np = items.filter((p) => p.kind === 'photo').length;
+    toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
+    if (acc.nav.view === 'photos' || acc.nav.view === 'videos') renderPickedView(acc);
+  } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
+}
+function renderPickedView(acc) {
+  const isPhotos = acc.nav.view === 'photos';
+  const kind = isPhotos ? 'photo' : 'video';
+  const items = pickedItems(acc, kind);
+  $('detailsTable').classList.add('hidden');
+  const grid = $('gridView');
+  grid.classList.remove('hidden');
+  grid.className = 'grid-view';
+  grid.innerHTML = '';
+  $('statusCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+  updateSelStatus();
+  const bar = document.createElement('div');
+  bar.className = 'picked-bar';
+  bar.innerHTML = '<button class="btn primary" id="importPhotosBtn">' + (isPhotos ? '📷' : '🎬') + ' Import from Google Photos</button>' +
+    '<span class="pv-note">Picks stay for this session only — import again after reloading the page.</span>';
+  grid.appendChild(bar);
+  $('importPhotosBtn').onclick = importFromPhotos;
+  if (!items.length) {
+    const d = document.createElement('div'); d.className = 'pv-info';
+    d.innerHTML = 'Nothing here yet.<br>Click <b>Import from Google Photos</b> to pick ' + (isPhotos ? 'photos' : 'videos') + ' and view them here.';
+    grid.appendChild(d); return;
+  }
+  for (const p of items) {
+    const el = document.createElement('div');
+    el.className = 'tile picked-tile';
+    if (p.kind === 'photo') {
+      el.innerHTML = '<div class="t-icon picked-thumb"><img src="' + escAttr(p.baseUrl + '=w320-h240-c') + '" alt="" loading="lazy"></div><div class="t-name">' + esc(p.name) + '</div>';
+    } else {
+      el.innerHTML = '<div class="t-icon picked-thumb picked-video"><span class="picked-play">🎬</span>' + (p.duration ? '<span class="picked-dur">' + esc(fmtDuration(p.duration)) + '</span>' : '') + '</div><div class="t-name">' + esc(p.name) + '</div>';
+    }
+    el.ondblclick = () => previewPicked(p);
+    el.onclick = () => { grid.querySelectorAll('.picked-tile.sel').forEach((t) => t.classList.remove('sel')); el.classList.add('sel'); };
+    el.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); pickedMenu(e.clientX, e.clientY, p); };
+    grid.appendChild(el);
+  }
+}
+function pickedMenu(x, y, p) {
+  openCtxMenu(x, y, [{ items: [
+    { icon: '👁️', label: 'View', fn: () => previewPicked(p) },
+    { icon: '⬇️', label: 'Download', fn: () => downloadPicked(p) },
+    { icon: '💾', label: 'Save to Drive', fn: () => savePickedToDrive(p) },
+    { icon: '🗑️', label: 'Remove from this view', fn: () => { const acc = activeAcc(); if (acc) { acc.picked = (acc.picked || []).filter((q) => q.pid !== p.pid); renderPickedView(acc); } } },
+  ] }]);
+}
+async function previewPicked(p) {
+  const f = { name: p.name, mimeType: p.mimeType };
+  $('modalBox').classList.add('wide');
+  const closePv = () => { revokePreviewUrl(); $('modalBox').classList.remove('wide'); };
+  openModal('👁️ ' + p.name,
+    '<div id="pvBody" class="pv-body"><div class="pv-loading">Loading preview…</div></div>',
+    [
+      { label: 'Download', keepOpen: true, onClick: () => downloadPicked(p) },
+      { label: 'Save to Drive', keepOpen: true, onClick: () => savePickedToDrive(p) },
+      { label: 'Close' },
+    ], closePv);
+  const body = $('pvBody');
+  try {
+    setBusy(true, 'Loading preview…');
+    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    setBusy(false);
+    await renderPreviewBlob(f, blob, body);
+  } catch (e) { setBusy(false); body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '</div>'; }
+}
+async function downloadPicked(p) {
+  setBusy(true, 'Preparing download…');
+  try {
+    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = p.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('Download started: ' + p.name, 'ok');
+  } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
+}
+async function savePickedToDrive(p) {
+  const acc = activeAcc(); if (!acc || acc.needsAuth) { toast('Connect a drive first.', 'err'); return; }
+  setBusy(true, 'Saving to Drive…');
+  try {
+    const blob = await (await fetch(pickedBytesUrl(p))).blob();
+    await uploadBlob(acc, blob, p.name, 'root', p.mimeType);
+    invalidate(acc);
+    toast('Saved to My Drive: ' + p.name, 'ok');
+  } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
 }
 function updateSelStatus() {
   const acc = activeAcc();
@@ -816,19 +969,24 @@ async function previewFile(f) {
     setBusy(true, 'Loading preview…');
     const { blob } = await fetchFileBlob(acc, f);
     setBusy(false);
-    const url = previewObjectUrl(blob);
-    if (kind === 'image') body.innerHTML = '<img class="pv-img" src="' + url + '" alt="">';
-    else if (kind === 'pdf') body.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
-    else if (kind === 'video') body.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video><p class="pv-note">Large videos download fully before playing — give it a moment.</p>';
-    else if (kind === 'audio') body.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
-    else if (kind === 'text') { const t = await blob.text(); renderTextPreview(t, body); }
-    else if (kind === 'docx') await renderDocxPreview(blob, body);
-    else if (kind === 'xlsx') await renderXlsxPreview(blob, body);
-    else if (kind === 'zip') await renderZipPreview(blob, body);
+    await renderPreviewBlob(f, blob, body);
   } catch (e) {
     setBusy(false);
     body.innerHTML = '<div class="pv-error">Could not load preview: ' + esc(e.message) + '<br><br>Use Download or Open in Drive below.</div>';
   }
+}
+async function renderPreviewBlob(f, blob, body) {
+  const kind = previewKind(f);
+  const url = previewObjectUrl(blob);
+  if (kind === 'image') body.innerHTML = '<img class="pv-img" src="' + url + '" alt="">';
+  else if (kind === 'pdf') body.innerHTML = '<iframe class="pv-frame" src="' + url + '"></iframe>';
+  else if (kind === 'video') body.innerHTML = '<video class="pv-media" controls preload="metadata" src="' + url + '"></video><p class="pv-note">Large videos download fully before playing — give it a moment.</p>';
+  else if (kind === 'audio') body.innerHTML = '<audio class="pv-media" controls preload="metadata" src="' + url + '"></audio>';
+  else if (kind === 'text') { const t = await blob.text(); renderTextPreview(t, body); }
+  else if (kind === 'docx') await renderDocxPreview(blob, body);
+  else if (kind === 'xlsx') await renderXlsxPreview(blob, body);
+  else if (kind === 'zip') await renderZipPreview(blob, body);
+  else renderOtherPreview(f, body);
 }
 async function renderNativePreview(acc, f, body) {
   const exp = EXPORT_MAP[f.mimeType];
@@ -972,6 +1130,7 @@ function syncCommandBar() {
   const inTrash = acc && acc.nav.view === 'trash';
   const can = (cmd) => {
     if (!acc || acc.needsAuth) return false;
+    if (acc.nav.view === 'photos' || acc.nav.view === 'videos') return false; // media views have their own actions
     switch (cmd) {
       case 'newfolder': case 'upload': return !inTrash;
       case 'cut': case 'copy': return sel > 0;
