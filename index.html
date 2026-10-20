@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GDrive Explorer</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0067c0">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="app" class="explorer" aria-label="GDrive Explorer">
+
+  <!-- ===== Title bar ===== -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <img src="icons/icon.svg" class="app-icon" alt="">
+      <span class="app-title">GDrive Explorer</span>
+      <span class="mode-badge" id="modeBadge" title="Tokens kept only while this window/tab lives">Web mode</span>
+    </div>
+    <div class="titlebar-right">
+      <div class="drive-switcher" id="driveSwitcher" aria-label="Connected drives">
+        <div class="chips" id="driveChips"></div>
+        <button class="add-drive" id="addDriveBtn" title="Connect another Google Drive">&#65291; Add Drive</button>
+      </div>
+      <label class="remember" title="On a personal PC you can keep sign-in between sessions. On a shared/office PC leave this OFF.">
+        <input type="checkbox" id="rememberToggle"> Remember on this device
+      </label>
+      <button class="signout-all" id="signOutAllBtn" title="Sign out of every drive and wipe all app data">&#9095; Sign out</button>
+    </div>
+  </div>
+
+  <!-- ===== Setup / not-configured notice ===== -->
+  <div class="setup-banner hidden" id="setupBanner">
+    <span>&#9888;&#65039; <strong>Setup needed:</strong> paste your Google OAuth Client ID into <code>config.js</code>
+    (see README) and redeploy. Add-Drive is disabled until then.</span>
+  </div>
+
+  <!-- ===== Tab bar ===== -->
+  <div class="tabbar">
+    <div class="tab active" id="mainTab"><img src="icons/icon.svg" class="tab-icon" alt=""><span id="tabLabel">My Drive</span><span class="tab-close" id="tabClose" title="Close to root">&times;</span></div>
+    <div class="tabs-spacer"></div>
+    <div class="account-tag" id="accountTag"></div>
+  </div>
+
+  <!-- ===== Command bar ===== -->
+  <div class="commandbar" id="commandBar">
+    <button class="cmd" data-cmd="newfolder" title="New folder">&#128193;<span>New folder</span></button>
+    <button class="cmd" data-cmd="upload" title="Upload files">&#11014;<span>Upload</span></button>
+    <div class="cmd-sep"></div>
+    <button class="cmd" data-cmd="cut" title="Cut (Ctrl+X)">&#9986;<span>Cut</span></button>
+    <button class="cmd" data-cmd="copy" title="Copy (Ctrl+C)">&#128203;<span>Copy</span></button>
+    <button class="cmd" data-cmd="paste" title="Paste (Ctrl+V)">&#128203;<span>Paste</span></button>
+    <button class="cmd" data-cmd="rename" title="Rename (F2)">&#9998;<span>Rename</span></button>
+    <button class="cmd" data-cmd="share" title="Share options">&#128279;<span>Share</span></button>
+    <button class="cmd danger" data-cmd="trash" title="Move to bin (Del)">&#128465;<span>Delete</span></button>
+    <div class="cmd-sep"></div>
+    <button class="cmd" data-cmd="sort" title="Sort">&#8645;<span>Sort</span></button>
+    <button class="cmd" data-cmd="view" title="Change view">&#9862;<span>View</span></button>
+    <button class="cmd hidden" id="emptyBinBtn" data-cmd="emptybin" title="Delete everything in the bin">&#128465;&#10006;<span>Empty bin</span></button>
+  </div>
+
+  <!-- ===== Address bar ===== -->
+  <div class="addressbar">
+    <button class="nav-btn" id="backBtn" title="Back" disabled>&#8592;</button>
+    <button class="nav-btn" id="fwdBtn" title="Forward" disabled>&#8594;</button>
+    <button class="nav-btn" id="upBtn" title="Up">&#8593;</button>
+    <div class="crumbs" id="crumbs"></div>
+    <button class="nav-btn" id="refreshBtn" title="Refresh">&#8635;</button>
+    <div class="searchbox">
+      <input id="searchInput" type="text" placeholder="Search in this Drive" autocomplete="off">
+      <span class="search-icon">&#128269;</span>
+    </div>
+  </div>
+
+  <!-- ===== Main area ===== -->
+  <div class="main">
+    <aside class="sidebar">
+      <div class="side-section" id="sideLibrary">
+        <div class="side-item" data-view="folder-root">&#127968;<span>My Drive</span></div>
+        <div class="side-item" data-view="recent">&#128339;<span>Recent</span></div>
+        <div class="side-item" data-view="starred">&#11088;<span>Starred</span></div>
+        <div class="side-item" data-view="shared">&#128101;<span>Shared with me</span></div>
+        <div class="side-item" data-view="trash">&#128465;<span>Bin</span></div>
+      </div>
+      <div class="side-label">Folders</div>
+      <div class="tree" id="folderTree"></div>
+      <div class="storage" id="storageMeter">
+        <div class="storage-label">Storage</div>
+        <div class="storage-bar"><div class="storage-fill" id="storageFill"></div></div>
+        <div class="storage-text" id="storageText">—</div>
+      </div>
+    </aside>
+
+    <section class="content" id="contentArea" tabindex="0" aria-label="Files">
+      <div class="empty-state hidden" id="emptyState">
+        <img src="icons/icon.svg" alt="" class="empty-icon">
+        <h2>You&rsquo;re signed out — nothing left behind</h2>
+        <p>No accounts, no files, no traces. Click <strong>+ Add Drive</strong> above to connect a Google Drive.</p>
+        <button class="add-drive big" id="addDriveBtn2">&#65291; Add Drive</button>
+        <p class="tiny">Tokens are kept only while this window is open (web/office mode). Tick <em>Remember on this device</em> first if this is your personal PC.</p>
+      </div>
+      <div class="filewrap hidden" id="fileWrap">
+        <table class="details-view" id="detailsTable">
+          <thead><tr>
+            <th data-sort="name">Name <span class="sort-ind"></span></th>
+            <th data-sort="modified">Date modified <span class="sort-ind"></span></th>
+            <th data-sort="type">Type <span class="sort-ind"></span></th>
+            <th data-sort="size">Size <span class="sort-ind"></span></th>
+            <th>Sharing</th>
+          </tr></thead>
+          <tbody id="detailsBody"></tbody>
+        </table>
+        <div class="grid-view hidden" id="gridView"></div>
+      </div>
+      <div class="busy hidden" id="busy"><div class="spinner"></div><div id="busyText">Working…</div></div>
+    </section>
+
+    <aside class="detailspane" id="detailsPane">
+      <div class="dp-empty" id="dpEmpty">Select an item to see details</div>
+      <div class="dp-body hidden" id="dpBody">
+        <div class="dp-icon" id="dpIcon">&#128193;</div>
+        <div class="dp-name" id="dpName"></div>
+        <div class="dp-rows" id="dpRows"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===== Status bar ===== -->
+  <div class="statusbar">
+    <span id="statusCount">0 items</span>
+    <span class="status-sep"></span>
+    <span id="statusSel"></span>
+    <span class="status-spacer"></span>
+    <span id="statusMsg"></span>
+    <span class="status-sep"></span>
+    <span id="statusDrive">No drive connected</span>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div class="ctx hidden" id="ctxMenu" role="menu"></div>
+
+<!-- Modal -->
+<div class="modal-backdrop hidden" id="modalBackdrop">
+  <div class="modal" id="modalBox" role="dialog">
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<input type="file" id="filePicker" multiple class="hidden">
+
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
