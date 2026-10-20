@@ -883,9 +883,28 @@ async function clearPicked() {
   const acc = activeAcc(); if (!acc) return;
   if (!confirm('Remove all picked photos/videos from this view?')) return;
   for (const sid of (acc.photoSessions || [])) { try { await photosApi(acc, '/sessions/' + sid, { method: 'DELETE' }); } catch (e) {} }
+  revokePickedThumbs(acc);
   acc.photoSessions = []; acc.photoSessionId = null; acc.picked = [];
   if (acc.nav.view === 'media') renderPickedView(acc);
   toast('Cleared.', 'ok');
+}
+// Load a picked item's thumbnail via authenticated fetch (picker /ppa/ URLs need the token).
+// Caches the object URL on the item; callers reuse p._thumbUrl when present.
+async function loadPickedThumb(p, params) {
+  const acc = activeAcc();
+  const url = p.baseUrl + params;
+  const authOpts = acc && acc.token ? { headers: { 'Authorization': 'Bearer ' + acc.token } } : undefined;
+  let res = null;
+  if (authOpts) { try { res = await fetch(url, authOpts); } catch (e) { res = null; } }
+  if (!res || !res.ok) { try { res = await fetch(url); } catch (e) { res = null; } }
+  if (!res || !res.ok) throw new Error('thumb failed');
+  const blob = await res.blob();
+  if (p._thumbUrl) { try { URL.revokeObjectURL(p._thumbUrl); } catch (e) {} }
+  p._thumbUrl = URL.createObjectURL(blob);
+  return p._thumbUrl;
+}
+function revokePickedThumbs(acc) {
+  (acc.picked || []).forEach((p) => { if (p._thumbUrl) { try { URL.revokeObjectURL(p._thumbUrl); } catch (e) {} p._thumbUrl = null; } });
 }
 // Fetch a picked item's bytes.
 // Tries anonymous first, then with the OAuth token (some picker URLs require it),
@@ -935,11 +954,17 @@ function renderPickedView(acc) {
     const el = document.createElement('div');
     el.className = 'tile picked-tile';
     if (p.kind === 'photo') {
-      el.innerHTML = '<div class="t-icon picked-thumb"><img src="' + escAttr(p.baseUrl + '=w320-h240-c') + '" alt="" loading="lazy"></div><div class="t-name">' + esc(p.name) + '</div>';
+      el.innerHTML = '<div class="t-icon picked-thumb"><img alt="" loading="lazy"></div><div class="t-name">' + esc(p.name) + '</div>';
       const img = el.querySelector('img');
-      if (img) img.onerror = () => { const d = document.createElement('div'); d.className = 'picked-thumb picked-broken'; d.textContent = '📷'; img.replaceWith(d); };
+      const showBroken = () => { const d = document.createElement('div'); d.className = 'picked-thumb picked-broken'; d.textContent = '📷'; img.replaceWith(d); };
+      if (p._thumbUrl) img.src = p._thumbUrl;
+      else loadPickedThumb(p, '=w320-h240-c').then((url) => { img.src = url; }).catch(showBroken);
     } else {
-      el.innerHTML = '<div class="t-icon picked-thumb picked-video"><span class="picked-play">🎬</span>' + (p.duration ? '<span class="picked-dur">' + esc(fmtDuration(p.duration)) + '</span>' : '') + '</div><div class="t-name">' + esc(p.name) + '</div>';
+      el.innerHTML = '<div class="t-icon picked-thumb picked-video"><img alt="" loading="lazy" style="display:none">' + (p.duration ? '<span class="picked-dur">' + esc(fmtDuration(p.duration)) + '</span>' : '') + '</div><div class="t-name">' + esc(p.name) + '</div>';
+      const img = el.querySelector('img');
+      const showPlaceholder = () => { img.remove(); const s = document.createElement('span'); s.className = 'picked-play'; s.textContent = '🎬'; el.querySelector('.picked-thumb').prepend(s); };
+      if (p._thumbUrl) { img.src = p._thumbUrl; img.style.display = ''; }
+      else loadPickedThumb(p, '=w320-h240').then((url) => { img.src = url; img.style.display = ''; }).catch(showPlaceholder);
     }
     el.ondblclick = () => previewPicked(p);
     el.onclick = () => { grid.querySelectorAll('.picked-tile.sel').forEach((t) => t.classList.remove('sel')); el.classList.add('sel'); };
@@ -950,7 +975,6 @@ function renderPickedView(acc) {
 function pickedMenu(x, y, p) {
   openCtxMenu(x, y, [{ items: [
     { icon: '👁️', label: 'View', fn: () => previewPicked(p) },
-    { icon: '🔗', label: 'Open original in new tab', fn: () => window.open(p.baseUrl + '=d', '_blank') },
     { icon: '⬇️', label: 'Download', fn: () => downloadPicked(p) },
     { icon: '💾', label: 'Save to Drive', fn: () => savePickedToDrive(p) },
     { icon: '🗑️', label: 'Remove from this view', fn: () => { const acc = activeAcc(); if (acc) { acc.picked = (acc.picked || []).filter((q) => q.pid !== p.pid); renderPickedView(acc); } } },
@@ -964,8 +988,6 @@ async function previewPicked(p) {
     '<div id="pvBody" class="pv-body"><div class="pv-loading">Loading preview…</div></div>',
     [
       { label: 'Download', keepOpen: true, onClick: () => downloadPicked(p) },
-      { label: '🔗 Open original', onClick: () => window.open(p.baseUrl + '=d', '_blank') },
-      { label: '📋 Copy photo link', keepOpen: true, onClick: () => { try { console.log('[photos] baseUrl: ' + p.baseUrl); } catch (e) {} navigator.clipboard.writeText(p.baseUrl + '=d').then(() => toast('Photo link copied — paste it in chat.', 'ok')).catch(() => toast('Copy failed — the link is in the browser console (F12).', 'err')); } },
       { label: 'Save to Drive', keepOpen: true, onClick: () => savePickedToDrive(p) },
       { label: 'Close' },
     ], closePv);
