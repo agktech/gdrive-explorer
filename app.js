@@ -507,7 +507,7 @@ async function goView(acc, view) {
   acc.selected = new Set(); pushNav(acc); await loadCurrent();
 }
 function viewLabel(v) {
-  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', sharedbyme: 'Shared by me', photos: 'My Photos', videos: 'My Videos', trash: 'Bin', search: 'Search results' }[v] || v;
+  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', sharedbyme: 'Shared by me', media: 'My Photos & Videos', trash: 'Bin', search: 'Search results' }[v] || v;
 }
 
 /* ---------------- Data loading ---------------- */
@@ -693,7 +693,7 @@ function renderItems() {
   const acc = activeAcc();
   const table = $('detailsTable'), grid = $('gridView'), body = $('detailsBody');
   if (!acc) { body.innerHTML = ''; grid.innerHTML = ''; return; }
-  if (acc.nav.view === 'photos' || acc.nav.view === 'videos') return renderPickedView(acc);
+  if (acc.nav.view === 'media') return renderPickedView(acc);
   const items = acc.items;
   $('statusCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
   updateSelStatus();
@@ -834,16 +834,14 @@ async function importFromPhotos() {
     acc.picked = (acc.picked || []).concat(items);
     const np = items.filter((p) => p.kind === 'photo').length;
     toast('Imported ' + np + ' photo(s) and ' + (items.length - np) + ' video(s).', 'ok');
-    if (acc.nav.view === 'photos' || acc.nav.view === 'videos') renderPickedView(acc);
+    if (acc.nav.view === 'media') renderPickedView(acc);
   } catch (e) {
     if (e && e.status === 403) { setBusy(false); offerPhotosConsent(e.message); return; }
     toast(e.message, 'err');
   } finally { setBusy(false); }
 }
 function renderPickedView(acc) {
-  const isPhotos = acc.nav.view === 'photos';
-  const kind = isPhotos ? 'photo' : 'video';
-  const items = pickedItems(acc, kind);
+  const items = (acc.picked || []).slice().sort((a, b) => String(b.createTime || '').localeCompare(String(a.createTime || '')));
   $('detailsTable').classList.add('hidden');
   const grid = $('gridView');
   grid.classList.remove('hidden');
@@ -853,13 +851,13 @@ function renderPickedView(acc) {
   updateSelStatus();
   const bar = document.createElement('div');
   bar.className = 'picked-bar';
-  bar.innerHTML = '<button class="btn primary" id="importPhotosBtn">' + (isPhotos ? '📷' : '🎬') + ' Import from Google Photos</button>' +
+  bar.innerHTML = '<button class="btn primary" id="importPhotosBtn">📷 Import from Google Photos</button>' +
     '<span class="pv-note">Picks stay for this session only — import again after reloading the page.</span>';
   grid.appendChild(bar);
   $('importPhotosBtn').onclick = importFromPhotos;
   if (!items.length) {
     const d = document.createElement('div'); d.className = 'pv-info';
-    d.innerHTML = 'Nothing here yet.<br>Click <b>Import from Google Photos</b> to pick ' + (isPhotos ? 'photos' : 'videos') + ' and view them here.';
+    d.innerHTML = 'Nothing here yet.<br>Click <b>Import from Google Photos</b> to pick photos and videos and view them here.';
     grid.appendChild(d); return;
   }
   for (const p of items) {
@@ -1168,7 +1166,7 @@ function syncCommandBar() {
   const inTrash = acc && acc.nav.view === 'trash';
   const can = (cmd) => {
     if (!acc || acc.needsAuth) return false;
-    if (acc.nav.view === 'photos' || acc.nav.view === 'videos') return false; // media views have their own actions
+    if (acc.nav.view === 'media') return false; // media view has its own actions
     switch (cmd) {
       case 'newfolder': case 'upload': return !inTrash;
       case 'cut': case 'copy': return sel > 0;
