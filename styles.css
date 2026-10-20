@@ -370,3 +370,4 @@ button { font-family: inherit; }
 .picked-tile.sel { background: var(--selected); border-color: #9ecbf0; }
 /* Thicker navigation arrows */
 .nav-btn { -webkit-text-stroke: 0.7px currentColor; }
+.picked-thumb.picked-broken { height: 96px; display: flex; align-items: center; justify-content: center; font-size: 34px; background: #f1f5f9; border-radius: 6px; }
