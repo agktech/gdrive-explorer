@@ -42,7 +42,7 @@ The app ships with a placeholder in `config.js`. To activate:
    the app as **Test users**.
 3. **Credentials → Create credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://gdrive-explorer.pages.dev`
-     (add `http://localhost:8080` too if you develop locally).
+     (for local development, `http://localhost:8000` is also registered).
    - Scope used by the app: `https://www.googleapis.com/auth/drive`
 4. Copy the generated **Client ID** into `config.js`:
 
@@ -60,7 +60,7 @@ The app ships with a placeholder in `config.js`. To activate:
 
 ```bash
 cd gdrive-explorer-app
-python3 -m http.server 8080   # then open http://localhost:8080
+python3 -m http.server 8000   # then open http://localhost:8000 (registered origin)
 ```
 
 ## Desktop app (.exe)
