@@ -790,14 +790,16 @@ async function photosApi(acc, path, opts) {
   return res;
 }
 function pickItem(m) {
-  const isVideo = (m.mimeType || '').startsWith('video/');
-  const mm = m.mediaMetadata || {};
+  // Picker API returns PickedMediaItem: { id, createTime, type, mediaFile: { baseUrl, mimeType, filename, mediaFileMetadata } }
+  const mf = m.mediaFile || {};
+  const isVideo = m.type === 'VIDEO' || (mf.mimeType || '').startsWith('video/');
+  const md = mf.mediaFileMetadata || {};
   return {
-    pid: m.id, name: m.filename || (isVideo ? 'video.mp4' : 'photo.jpg'),
-    mimeType: m.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-    baseUrl: m.baseUrl, kind: isVideo ? 'video' : 'photo',
-    createTime: mm.creationTime || new Date().toISOString(),
-    duration: mm.video && mm.video.duration ? mm.video.duration : null,
+    pid: m.id, name: mf.filename || (isVideo ? 'video.mp4' : 'photo.jpg'),
+    mimeType: mf.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+    baseUrl: mf.baseUrl, kind: isVideo ? 'video' : 'photo',
+    createTime: m.createTime || new Date().toISOString(),
+    duration: md.video && md.video.duration ? md.video.duration : null,
   };
 }
 function pickedBytesUrl(p) { return p.baseUrl + (p.kind === 'video' ? '=dv' : '=d'); }
@@ -826,7 +828,7 @@ async function importFromPhotos() {
     let pageToken = '';
     do {
       const r = await (await photosApi(acc, '/mediaItems?sessionId=' + encodeURIComponent(sess.id) + '&pageSize=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''))).json();
-      (r.mediaItems || []).forEach((m) => { if (m.baseUrl) items.push(pickItem(m)); });
+      (r.mediaItems || []).forEach((m) => { if (m.mediaFile && m.mediaFile.baseUrl) items.push(pickItem(m)); });
       pageToken = r.nextPageToken || '';
     } while (pageToken);
     try { await photosApi(acc, '/sessions/' + sess.id, { method: 'DELETE' }); } catch (e) {}
