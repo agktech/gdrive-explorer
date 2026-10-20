@@ -944,6 +944,7 @@ function renderPickedView(acc) {
 function pickedMenu(x, y, p) {
   openCtxMenu(x, y, [{ items: [
     { icon: '👁️', label: 'View', fn: () => previewPicked(p) },
+    { icon: '🔗', label: 'Open original in new tab', fn: () => window.open(p.baseUrl + '=d', '_blank') },
     { icon: '⬇️', label: 'Download', fn: () => downloadPicked(p) },
     { icon: '💾', label: 'Save to Drive', fn: () => savePickedToDrive(p) },
     { icon: '🗑️', label: 'Remove from this view', fn: () => { const acc = activeAcc(); if (acc) { acc.picked = (acc.picked || []).filter((q) => q.pid !== p.pid); renderPickedView(acc); } } },
@@ -957,10 +958,12 @@ async function previewPicked(p) {
     '<div id="pvBody" class="pv-body"><div class="pv-loading">Loading preview…</div></div>',
     [
       { label: 'Download', keepOpen: true, onClick: () => downloadPicked(p) },
+      { label: '🔗 Open original', onClick: () => window.open(p.baseUrl + '=d', '_blank') },
       { label: 'Save to Drive', keepOpen: true, onClick: () => savePickedToDrive(p) },
       { label: 'Close' },
     ], closePv);
   const body = $('pvBody');
+  try { console.log('[photos] baseUrl for ' + p.name + ': ' + p.baseUrl); } catch (e) {}
   try {
     setBusy(true, 'Loading preview…');
     const blob = await fetchPickedBytes(p);
