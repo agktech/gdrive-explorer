@@ -339,10 +339,13 @@ const driveJson = async (acc, path, opts) => { const r = await drive(acc, path, 
 const jsonOpts = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
 
 async function listAll(acc, baseQuery) {
+  // baseQuery already starts with '/files?' — do NOT prepend another '/files?' here.
+  // (A double '/files?/files?' silently drops the real `q` filter, which once made
+  // every listing return the whole drive instead of the requested folder/view.)
   let items = [], pageToken = '';
   do {
     const q = baseQuery + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
-    const page = await driveJson(acc, '/files?' + q);
+    const page = await driveJson(acc, q);
     items = items.concat(page.files || []);
     pageToken = page.nextPageToken || '';
   } while (pageToken);
