@@ -151,9 +151,22 @@ function setStatus(msg) {
   if (statusTimer) clearTimeout(statusTimer);
   if (msg) statusTimer = setTimeout(() => { $('statusMsg').textContent = ''; }, 6000);
 }
+let busyTimer = null, busyStart = 0, busyBaseText = '';
 function setBusy(on, text) {
-  $('busy').classList.toggle('hidden', !on);
-  if (text) $('busyText').textContent = text;
+  const el = $('busy');
+  if (on) {
+    busyStart = Date.now();
+    busyBaseText = text || 'Working…';
+    el.classList.remove('hidden');
+    const tick = () => { $('busyText').textContent = busyBaseText + '  ·  ' + Math.floor((Date.now() - busyStart) / 1000) + 's'; };
+    tick();
+    clearInterval(busyTimer);
+    busyTimer = setInterval(tick, 1000);
+  } else {
+    clearInterval(busyTimer); busyTimer = null;
+    el.classList.add('hidden');
+    if (text) $('busyText').textContent = text;
+  }
 }
 
 /* ---------------- Modal helper ---------------- */
