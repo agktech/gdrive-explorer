@@ -341,3 +341,5 @@ button { font-family: inherit; }
 .pv-zipname { flex: 1; word-break: break-all; }
 .pv-info { padding: 24px; text-align: center; color: var(--muted); line-height: 1.7; }
 .pv-error { padding: 24px; color: #b00020; line-height: 1.6; }
+.pv-zippreview { margin-top: 10px; border-top: 1px solid #e3e3e3; padding-top: 10px; }
+.pv-zippreview-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
