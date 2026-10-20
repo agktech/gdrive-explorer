@@ -1,6 +1,6 @@
 // GDrive Explorer service worker — caches only the app shell (HTML/CSS/JS/icons).
 // It NEVER caches Google API responses, tokens, or file data: sign-out leaves nothing behind.
-const CACHE = 'gdrive-explorer-shell-v27';
+const CACHE = 'gdrive-explorer-shell-v28';
 const SHELL = [
   './',
   './index.html',
