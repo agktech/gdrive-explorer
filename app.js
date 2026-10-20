@@ -97,22 +97,44 @@ function typeIcon(file) {
   };
   return icons[t] || '&#128196;';
 }
-function accessOf(file) {
-  const perms = file.permissions || [];
-  const ownerEmails = (file.owners || []).map((o) => (o.emailAddress || '').toLowerCase());
-  if (perms.some((p) => p.type === 'anyone')) return 'public';
-  for (const p of perms) {
-    if (p.type === 'anyone' || p.type === 'domain') return 'shared';
-    if (p.type === 'user' && !ownerEmails.includes((p.emailAddress || '').toLowerCase())) return 'shared';
-    if (p.type === 'group') return 'shared';
-  }
-  return 'private';
+// Social-media style share icon (small, 12px) for "shared with me".
+const SHARE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v13"/><path d="M7.5 7.5 12 3l4.5 4.5"/></svg>';
+function ownerName(file) {
+  const o = (file.owners && file.owners[0]) || {};
+  return o.displayName || o.emailAddress || '—';
 }
-function accessBadge(file) {
-  const a = accessOf(file);
+function amOwnerOf(file, myEmail) {
+  const me = (myEmail || '').toLowerCase();
+  return (file.owners || []).some((o) => ((o.emailAddress || '').toLowerCase() === me) || o.me);
+}
+function othersCanSee(file, myEmail) {
+  const me = (myEmail || '').toLowerCase();
+  return (file.permissions || []).some((p) => {
+    if (p.type === 'anyone' || p.type === 'domain' || p.type === 'group') return true;
+    if (p.type === 'user') { const em = (p.emailAddress || '').toLowerCase(); return em && em !== me; }
+    return false;
+  });
+}
+// Four states: 'private' (mine, no badge), 'shared-by-me', 'shared-with-me', 'public'.
+function accessOf(file, myEmail) {
+  const perms = file.permissions || [];
+  if (perms.some((p) => p.type === 'anyone')) return 'public';
+  if (amOwnerOf(file, myEmail)) return (othersCanSee(file, myEmail) || file.shared) ? 'shared-by-me' : 'private';
+  return 'shared-with-me';
+}
+function accessBadge(file, myEmail) {
+  const a = accessOf(file, myEmail);
   if (a === 'public') return '<span class="badge public" title="Public — anyone with the link">&#127760;</span>';
-  if (a === 'shared') return '<span class="badge shared" title="Shared with specific people">&#128101;</span>';
-  return '<span class="badge private" title="Private — only you">&#128274;</span>';
+  if (a === 'shared-by-me') return '<span class="badge sharedbyme" title="Shared by me">&#128101;</span>';
+  if (a === 'shared-with-me') return '<span class="badge sharedwithme" title="Shared with me by ' + escAttr(ownerName(file)) + '">' + SHARE_ICON_SVG + '</span>';
+  return ''; // private and mine: no badge, just the folder/file icon
+}
+function accessLabel(file, myEmail) {
+  const a = accessOf(file, myEmail);
+  if (a === 'public') return 'Public';
+  if (a === 'shared-by-me') return 'Shared';
+  if (a === 'shared-with-me') return ownerName(file);
+  return 'Private';
 }
 
 /* ---------------- Toasts / status ---------------- */
@@ -396,7 +418,7 @@ async function goView(acc, view) {
   acc.selected = new Set(); pushNav(acc); await loadCurrent();
 }
 function viewLabel(v) {
-  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', trash: 'Bin', search: 'Search results' }[v] || v;
+  return { folder: 'My Drive', recent: 'Recent', starred: 'Starred', shared: 'Shared with me', sharedbyme: 'Shared by me', trash: 'Bin', search: 'Search results' }[v] || v;
 }
 
 /* ---------------- Data loading ---------------- */
@@ -431,6 +453,10 @@ async function fetchViewItems(acc, nav) {
     case 'recent': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('trashed=false') + '&orderBy=modifiedTime%20desc&' + LIST_Q());
     case 'starred': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('starred=true and trashed=false') + '&' + LIST_Q());
     case 'shared': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('sharedWithMe=true and trashed=false') + '&' + LIST_Q());
+    case 'sharedbyme': {
+      const mine = await listAll(acc, '/files?' + 'q=' + encodeURIComponent("'me' in owners and trashed=false") + '&' + LIST_Q());
+      return mine.filter((f) => { const a = accessOf(f, acc.email); return a === 'shared-by-me' || a === 'public'; });
+    }
     case 'trash': return listAll(acc, '/files?' + 'q=' + encodeURIComponent('trashed=true') + '&' + LIST_Q());
     case 'search': {
       const term = searchTerm.replace(/'/g, "\\'");
@@ -585,7 +611,7 @@ function renderItems() {
   // a "Folders" section first, then a "Files" section — never one mixed dump.
   const _folders = items.filter((f) => f.mimeType === FOLDER_MIME);
   const _files = items.filter((f) => f.mimeType !== FOLDER_MIME);
-  const groups = (acc.nav.view === 'folder' && _folders.length && _files.length)
+  const groups = ((acc.nav.view === 'folder' || acc.nav.view === 'sharedbyme') && _folders.length && _files.length)
     ? [['Folders', _folders], ['Files', _files]]
     : [[null, items]];
   if (viewMode === 'details') {
@@ -604,11 +630,11 @@ function renderItems() {
       if (sel) tr.className = 'selected';
       tr.dataset.id = f.id;
       tr.innerHTML =
-        '<td><span class="item-icon">' + typeIcon(f) + '</span>' + esc(f.name) + sc + accessBadge(f) + (f.starred ? ' <span title="Starred">&#11088;</span>' : '') + '</td>' +
+        '<td><span class="item-icon">' + typeIcon(f) + '</span>' + esc(f.name) + sc + accessBadge(f, acc.email) + (f.starred ? ' <span title="Starred">&#11088;</span>' : '') + '</td>' +
         '<td>' + esc(fmtDate(f.modifiedTime)) + '</td>' +
         '<td>' + esc(typeLabel(f.mimeType, f.name)) + '</td>' +
         '<td>' + (f.mimeType === FOLDER_MIME ? '—' : esc(fmtBytes(f.size))) + '</td>' +
-        '<td>' + esc(accessOf(f)) + '</td>';
+        '<td>' + esc(accessLabel(f, acc.email)) + '</td>';
       wireItemEvents(tr, f);
       body.appendChild(tr);
       }
@@ -629,11 +655,11 @@ function renderItems() {
       const el = document.createElement('div');
       if (viewMode === 'list') {
         el.className = 'list-row' + sel;
-        el.innerHTML = '<span class="item-icon">' + typeIcon(f) + '</span><span>' + esc(f.name) + sc + '</span>' + accessBadge(f) +
+        el.innerHTML = '<span class="item-icon">' + typeIcon(f) + '</span><span>' + esc(f.name) + sc + '</span>' + accessBadge(f, acc.email) +
           '<span style="color:var(--muted);font-size:12px">' + esc(typeLabel(f.mimeType, f.name)) + ' · ' + esc(fmtDate(f.modifiedTime)) + '</span>';
       } else {
         el.className = 'tile' + sel;
-        el.innerHTML = '<div class="t-icon">' + typeIcon(f) + '</div><div class="t-name">' + esc(f.name) + sc + accessBadge(f) + '</div>';
+        el.innerHTML = '<div class="t-icon">' + typeIcon(f) + '</div><div class="t-name">' + esc(f.name) + sc + accessBadge(f, acc.email) + '</div>';
       }
       el.dataset.id = f.id;
       wireItemEvents(el, f);
@@ -705,15 +731,15 @@ function renderDetailsPane() {
   empty.classList.add('hidden'); body.classList.remove('hidden');
   $('dpIcon').innerHTML = typeIcon(f);
   $('dpName').textContent = f.name;
-  const owner = (f.owners && f.owners[0] && (f.owners[0].displayName || f.owners[0].emailAddress)) || '—';
-  const a = accessOf(f);
+  const owner = ownerName(f);
+  const a = accessOf(f, acc.email);
   const rows = [
     ['Type', typeLabel(f.mimeType, f.name)],
     ['Size', f.mimeType === FOLDER_MIME ? '—' : fmtBytes(f.size)],
     ['Modified', fmtDate(f.modifiedTime)],
     ['Created', fmtDate(f.createdTime)],
     ['Owner', owner],
-    ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared' ? '👥 Shared with people' : '🔒 Private'],
+    ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '📤 Shared with me by ' + ownerName(f) : '🔒 Private'],
     ['Account', acc.email],
   ];
   $('dpRows').innerHTML = rows.map((r) => '<div class="dp-row"><span class="k">' + esc(r[0]) + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('');
@@ -1050,8 +1076,8 @@ async function sharePanel(f) {
   let perms;
   try { perms = await listPerms(acc, f.id); } catch (e) { setBusy(false); toast(e.message, 'err'); return; }
   setBusy(false);
-  const a = accessOf(f);
-  const badge = a === 'public' ? '🌐 <b>Public</b> — anyone with the link' : a === 'shared' ? '👥 <b>Shared</b> with specific people' : '🔒 <b>Private</b> — only you';
+  const a = accessOf(f, acc.email);
+  const badge = a === 'public' ? '🌐 <b>Public</b> — anyone with the link' : a === 'shared-by-me' ? '👥 <b>Shared by me</b>' : a === 'shared-with-me' ? '📤 <b>Shared with me</b> by ' + esc(ownerName(f)) : '🔒 <b>Private</b> — only you';
   openModal('Share "' + f.name + '"',
     '<p>Status: ' + badge + '</p>' +
     '<div id="permList">' + perms.map(permRowHTML).join('') + '</div>' +
@@ -1110,13 +1136,13 @@ function wirePermRows(acc, f) {
 /* ---------------- Properties ---------------- */
 function propertiesDialog(f) {
   const acc = activeAcc();
-  const a = accessOf(f);
-  const owner = (f.owners && f.owners[0] && (f.owners[0].displayName || f.owners[0].emailAddress)) || '—';
+  const a = accessOf(f, acc.email);
+  const owner = ownerName(f);
   openModal('Properties — ' + f.name,
     '<div class="dp-rows">' +
     [['Name', f.name], ['Type', typeLabel(f.mimeType, f.name)], ['Size', f.mimeType === FOLDER_MIME ? '—' : fmtBytes(f.size)],
      ['Created', fmtDate(f.createdTime)], ['Modified', fmtDate(f.modifiedTime)], ['Owner', owner],
-     ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared' ? '👥 Shared with people' : '🔒 Private'],
+     ['Sharing', a === 'public' ? '🌐 Public (anyone with link)' : a === 'shared-by-me' ? '👥 Shared by me' : a === 'shared-with-me' ? '📤 Shared with me by ' + owner : '🔒 Private'],
      ['Account', acc ? acc.email : '—']]
       .map((r) => '<div class="dp-row"><span class="k">' + esc(r[0]) + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('') +
     '</div>',
@@ -1256,12 +1282,14 @@ function wireEvents() {
   updateModeBadge();
 
   document.querySelectorAll('.cmd').forEach((b) => {
-    b.onclick = () => {
+    b.onclick = (e) => {
       const c = b.dataset.cmd;
       const sel = selectedFiles();
       const acc = activeAcc();
       if (c === 'newfolder') createFolderHere();
       else if (c === 'upload') {
+        // Stop the click bubbling to document, or the menu is closed the instant it opens.
+        e.stopPropagation();
         const r = b.getBoundingClientRect();
         openCtxMenu(r.left, r.bottom + 4, [{
           items: [
