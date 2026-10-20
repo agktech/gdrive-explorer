@@ -190,8 +190,10 @@ button { font-family: inherit; }
 .details-view tbody tr.selected { background: var(--selected); }
 .details-view tbody tr.selected:hover { background: #c2dcf3; }
 .item-icon { width: 22px; display: inline-block; text-align: center; margin-right: 8px; }
-.badge { font-size: 12px; margin-left: 6px; }
-.badge.public { color: #0b7a3e; } .badge.shared { color: var(--accent); } .badge.private { color: #b5b5b5; }
+/* Small, subtle access badges next to the item name */
+.badge { font-size: 11px; margin-left: 5px; vertical-align: -1px; opacity: .9; }
+.badge svg { width: 12px; height: 12px; vertical-align: -2px; }
+.badge.public { color: #0b7a3e; } .badge.sharedbyme { color: var(--accent); } .badge.sharedwithme { color: #5f6368; }
 .shortcut-arrow { color: var(--accent); font-size: 11px; margin-left: 4px; }
 
 /* Icon / list views */
